@@ -23,14 +23,28 @@ function isPublicUrl(u) {
   return true;
 }
 
-async function get(url, ms = 12000) {
+/**
+ * Per-call record of what the network actually did.
+ *
+ * This exists because a backend that swallows its own errors cannot answer "did the internet work?".
+ * openFDA catches every failure and returns an empty list, so a dead connection and a genuine
+ * no-match looked identical. Every HTTP attempt ticks this counter, so `ok > 0` means the internet
+ * really answered. Kept per call, never module-level, so two searches cannot corrupt each other.
+ */
+function newNet() {
+  return { attempts: 0, ok: 0 };
+}
+
+async function get(url, ms = 12000, net) {
+  if (net) net.attempts += 1;
   const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,application/json,application/xml' }, redirect: 'follow', signal: AbortSignal.timeout(ms) });
   if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (net) net.ok += 1;
   return r;
 }
 
-async function ddg(q) {
-  const html = await (await get('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q))).text();
+async function ddg(q, net) {
+  const html = await (await get('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), 12000, net)).text();
   const out = [];
   const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   const snip = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => strip(m[1]));
@@ -50,13 +64,15 @@ async function ddg(q) {
 
 /** Europe PMC abstracts, optionally limited to some journals. Each result: title, url and abstract text. */
 const EUROPE_PMC = 'https://www.ebi.ac.uk/europepmc/webservices/rest/search';
-async function europePmc(query, journals = []) {
+async function europePmc(query, journals = [], net) {
   const terms = String(query || '').replace(/["\\]/g, ' ').trim().slice(0, 300);
   if (!terms) return [];
   const journalPart = journals.length ? `(${journals.map((j) => `JOURNAL:"${j}"`).join(' OR ')}) AND ` : '';
   const url = `${EUROPE_PMC}?query=${encodeURIComponent(`${journalPart}(${terms}) AND HAS_ABSTRACT:y`)}&format=json&pageSize=3&resultType=core`;
+  if (net) net.attempts += 1;
   const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) });
   if (!res.ok) return [];
+  if (net) net.ok += 1;
   const data = await res.json().catch(() => ({}));
   return (data?.resultList?.result || [])
     .filter((r) => r.abstractText)
@@ -67,8 +83,8 @@ async function europePmc(query, journals = []) {
     }));
 }
 
-async function pageText(url, chars = 2500) {
-  const r = await get(url);
+async function pageText(url, chars = 2500, net) {
+  const r = await get(url, 12000, net);
   const type = r.headers.get('content-type') || '';
   if (!/text\/html|text\/plain|xml/.test(type)) throw new Error('not a web page');
   return strip((await r.text()).slice(0, 1_500_000)).slice(0, chars);
@@ -78,10 +94,15 @@ async function pageText(url, chars = 2500) {
 export async function research(query, pageChars = 2500) {
   const q = String(query || '').trim().slice(0, 300);
   if (!q) throw new Error('Nothing to search for.');
-  const [w, p, label] = await Promise.allSettled([ddg(q), europePmc(q), openFdaByDrug(q)]);
+  const net = newNet();
+  const [w, p, label] = await Promise.allSettled([ddg(q, net), europePmc(q, [], net), openFdaByDrug(q, net)]);
+  // "The internet answered but had nothing" and "the internet could not be reached" are different
+  // facts, and the learner is told which one happened. `net.ok` counts HTTP responses that actually
+  // arrived, so a backend that swallows its own errors (openFDA) can no longer fake a live search.
+  const reachable = net.ok > 0;
   const web = (w.status === 'fulfilled' ? w.value : []).sort((a, b) => Number(TRUSTED.test(b.url)) - Number(TRUSTED.test(a.url))).slice(0, 3);
   const papers = p.status === 'fulfilled' ? p.value : [];
-  const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars)));
+  const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars, net)));
   // Textbook passages from the user's own library come first: they are the book the student studies from.
   const books = bookPassages(q, 6).map((b) => ({ ...b, kind: 'book' }));
   // The drug label is first when the query names a drug: full label text beats abstracts for adverse-effect facts.
@@ -92,8 +113,29 @@ export async function research(query, pageChars = 2500) {
     ...web.map((x, i) => ({ title: x.title, url: x.url, text: (pages[i].status === 'fulfilled' && pages[i].value.length > 200 ? pages[i].value : x.snippet) || x.snippet, kind: 'web' })),
     ...papers.map((x) => ({ ...x, kind: 'europepmc' })),
   ].filter((s) => s.text).map((s, i) => ({ n: i + 1, ...s }));
-  if (!sources.length) throw new Error('No sources found (check your internet connection, or try different wording).');
-  return { sources, retrievedAt: new Date().toISOString().slice(0, 10) };
+  // Never throw on an empty result: the caller has to be able to tell "searched, nothing found"
+  // from "could not search". The old throw made an offline device look like a normal empty answer.
+  //
+  // `search` reports the INTERNET, not whether any source exists anywhere. The library is local, so
+  // book passages survive an offline device — counting all sources would call a dead connection "ok".
+  const search = !reachable ? 'no-connection' : sources.some((s) => s.kind !== 'book') ? 'ok' : 'no-results';
+  if (!sources.length) {
+    return {
+      sources: [],
+      retrievedAt: new Date().toISOString().slice(0, 10),
+      search,
+      detail: reachable
+        ? 'The search ran but matched nothing usable for these words.'
+        : 'The search could not reach the internet (no connection, firewall or timeout).',
+    };
+  }
+  const detail =
+    search === 'no-connection'
+      ? `The internet could not be reached, so no web source was checked. ${sources.length} passage${sources.length === 1 ? '' : 's'} from the student's own books were found and are numbered below.`
+      : search === 'no-results'
+        ? `The internet was reached but matched nothing usable. ${sources.length} passage${sources.length === 1 ? '' : 's'} from the student's own books were found and are numbered below.`
+        : '';
+  return { sources, retrievedAt: new Date().toISOString().slice(0, 10), search, detail };
 }
 
 /**
@@ -148,21 +190,32 @@ async function openFdaLabel(query) {
 
 const NOT_A_DRUG = new Set(['adverse', 'effects', 'effect', 'side', 'drug', 'drugs', 'toxicity', 'treatment', 'features', 'feature',
   'criteria', 'causes', 'cause', 'diagnosis', 'diagnostic', 'management', 'clinical', 'disease', 'syndrome', 'investigation',
-  'investigations', 'the', 'and', 'with', 'from', 'for', 'about', 'overview', 'complications', 'anatomy', 'physiology']);
+  'investigations', 'the', 'and', 'with', 'from', 'for', 'about', 'overview', 'complications', 'anatomy', 'physiology',
+  // Words that appear inside a product's name but are never the drug itself. "therapy" returned
+  // "PAIN RELIEF HEAT THERAPY ROLL-ON" as the top source for "treatment of leprosy", because the
+  // lookup matches the word anywhere in the generic name.
+  'therapy', 'therapies', 'therapeutic', 'regimen', 'regimens', 'dose', 'doses', 'dosage', 'duration', 'monthly',
+  'daily', 'weekly', 'course', 'prophylaxis', 'prevention', 'control', 'programme', 'program']);
 
 /**
  * The FDA label of a named drug in the query (for example "adverse effects of isoniazid"). Its adverse-reactions and
  * warnings sections are full, label-grade text, which is what an adverse-effect question needs.
  */
-async function openFdaByDrug(query) {
+async function openFdaByDrug(query, net) {
   const words = [...new Set(String(query || '').toLowerCase().match(/[a-z][a-z-]{4,}/g) || [])].filter((w) => !NOT_A_DRUG.has(w));
   for (const word of words.slice(0, 6)) {
     const url = `https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`openfda.generic_name:"${word}"`)}&limit=1`;
+    if (net) net.attempts += 1;
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
-    if (!res || !res.ok) continue;
+    if (!res) continue; // a dead attempt: attempts went up, ok did not
+    if (!res.ok) continue;
+    if (net) net.ok += 1;
     const hit = (await res.json().catch(() => ({})))?.results?.[0];
     if (!hit) continue;
     const name = hit.openfda?.generic_name?.[0] || word;
+    // The search is a substring match inside the product name, so "therapy" pulled in
+    // "PAIN RELIEF HEAT THERAPY ROLL-ON". A real drug name must contain the query word as a whole word.
+    if (!new RegExp(`(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`, 'i').test(name)) continue;
     const text = [hit.adverse_reactions?.[0], hit.warnings_and_cautions?.[0] || hit.warnings?.[0]]
       .filter(Boolean)
       .join(' ')
@@ -175,7 +228,9 @@ async function openFdaByDrug(query) {
   const phrase = classWords.filter((w) => !NOT_A_DRUG.has(w)).map((w) => w.replace(/s$/, '')).join(' ').trim();
   if (phrase) {
     const url = `https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`openfda.pharm_class_epc:"${phrase}"`)}&limit=1`;
+    if (net) net.attempts += 1;
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+    if (res && res.ok && net) net.ok += 1;
     const hit = res && res.ok ? (await res.json().catch(() => ({})))?.results?.[0] : null;
     if (hit) {
       const name = hit.openfda?.generic_name?.[0] || phrase;

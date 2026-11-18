@@ -57,11 +57,6 @@
           <div class="stat-foot" id="installerFoot"></div>
         </article>
 
-        <article class="card stat">
-          <div class="stat-head"><h2>Agent bridge</h2><span id="agentPill" class="pill pill-idle">checking…</span></div>
-          <dl class="kv" id="agentKv"></dl>
-          <p class="hint" id="agentHint"></p>
-        </article>
       </div>
 
       <article class="card" id="modelsCard">
@@ -76,82 +71,6 @@
         <div id="modelProviders" class="model-providers">
           <p class="muted small">Launch the app, then press “Find models”.</p>
         </div>
-      </article>
-
-      <article class="card" id="agentCard">
-        <div class="card-head">
-          <h2>Send instruction to agent</h2>
-          <span class="muted small" id="agentTransport"></span>
-        </div>
-
-        <div class="form-grid agent-config">
-          <label class="field">
-            <span>Session ID <em>(blank = start a new one)</em></span>
-            <input id="agentSession" type="text" spellcheck="false" placeholder="ses_…" autocomplete="off" />
-          </label>
-          <label class="field">
-            <span>Model <em>(blank = session default)</em></span>
-            <input id="agentModel" type="text" spellcheck="false" placeholder="opencode/deepseek-v4.1-flash-free" autocomplete="off" />
-          </label>
-          <label class="field">
-            <span>CLI path <em>(blank = auto-detect)</em></span>
-            <input id="agentCli" type="text" spellcheck="false" placeholder="…\opencode-cli.exe" autocomplete="off" />
-          </label>
-          <div class="field field-actions">
-            <label class="check"><input id="agentAuto" type="checkbox" checked /> Auto-approve tools</label>
-            <div class="row">
-              <button type="button" id="btnProbe" class="btn btn-ghost">Probe</button>
-              <button type="button" id="btnSaveAgent" class="btn btn-ghost">Save</button>
-              <button type="button" id="btnSessions" class="btn btn-ghost">List sessions</button>
-            </div>
-          </div>
-        </div>
-        <div id="sessionList" class="session-list" hidden></div>
-
-        <div class="instruction">
-          <label class="field">
-            <span>Instruction <em>(Ctrl+Enter sends)</em></span>
-            <textarea id="instruction" rows="7" placeholder="Describe what the agent should do. Be specific: files, expected behaviour, how to verify. Screenshots and notes can be attached below."></textarea>
-          </label>
-          <div class="attach-row">
-            <label class="btn btn-ghost btn-small file-btn">
-              Attach screenshot
-              <input type="file" id="shotFile" accept="image/png,image/jpeg,image/webp" hidden />
-            </label>
-            <span class="muted small">or paste / drop an image into the box</span>
-            <div id="shotPreview" class="shot-preview" hidden>
-              <img id="shotThumb" alt="Attached screenshot preview" />
-              <div>
-                <div id="shotMeta" class="small"></div>
-                <button type="button" id="btnRemoveShot" class="btn btn-tiny btn-ghost">Remove</button>
-              </div>
-            </div>
-          </div>
-          <div class="send-row">
-            <button type="button" id="btnSend" class="btn btn-primary">Send to Agent</button>
-            <button type="button" id="btnCancelAgent" class="btn btn-danger" disabled>Cancel current</button>
-            <span class="muted small" id="sendHint"></span>
-          </div>
-        </div>
-
-        <div id="agentCurrent" class="agent-current" hidden>
-          <div class="agent-current-head">
-            <span class="pill" id="currentStatus">running</span>
-            <strong id="currentTitle"></strong>
-            <span class="muted small" id="currentMeta"></span>
-          </div>
-          <div id="currentText" class="agent-text"></div>
-          <details class="agent-details">
-            <summary>Raw events / errors</summary>
-            <pre id="currentRaw"></pre>
-          </details>
-        </div>
-
-        <div class="card-subhead">
-          <h3>Recent instructions</h3>
-          <button type="button" id="btnRefreshJobs" class="btn btn-tiny btn-ghost">Refresh</button>
-        </div>
-        <div id="agentJobs" class="job-list"><p class="muted small">No instructions sent yet.</p></div>
       </article>
 
       <article class="card logs-card">

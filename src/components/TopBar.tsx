@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Gauge, User, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Bell, Gauge, User, CheckCircle2, AlertCircle, Menu, X } from 'lucide-react';
 import { AppView, ExamType } from '../types.ts';
 
 function getInitials(name: string): string {
@@ -12,20 +12,44 @@ function getInitials(name: string): string {
   return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }
 
+const VIEW_TITLES: Record<AppView, string> = {
+  analytics: 'Performance',
+  practice: 'Practice Builder',
+  'pyq-topics': 'PYQ Topics',
+  'question-bank': 'Question Bank',
+  'test-runner': 'Active Test',
+  mistakes: 'Mistakes',
+  highlights: 'Highlights',
+  'ai-tutor': 'AI Tutor',
+  'pdf-reader': 'PDF Reader',
+  research: 'Evidence',
+  settings: 'Settings',
+  qa: 'QA & Benchmark',
+  'study-plan': 'Study Plan',
+  'bank-plan': 'Bank Study Plan',
+  syllabus: 'Syllabus',
+  reminders: 'Reminders',
+  sync: 'Sync & Backup',
+  reviews: 'Test Reviews',
+  today: 'Today',
+};
+
 interface TopBarProps {
+  currentView: AppView;
   onSearchSubmit: (query: string) => void;
   selectedExam: ExamType;
   onNavigate: (view: AppView) => void;
   mockPace?: string;
+  onOpenMobileNav?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
-  onSearchSubmit,
+  currentView,
   selectedExam,
   onNavigate,
   mockPace = '-',
+  onOpenMobileNav,
 }) => {
-  const [searchVal, setSearchVal] = useState('');
   const [showNotificationToast, setShowNotificationToast] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
 
@@ -142,37 +166,26 @@ export const TopBar: React.FC<TopBarProps> = ({
     setIsEditingProfile(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && searchVal.trim()) {
-      // The header search is a clinical-disease search; it belongs to the Clinical
-      // Evidence Browser. (It previously also fired a navigation to the PDF Reader,
-      // which is now hidden — sending the user to a hidden screen.)
-      onSearchSubmit(searchVal);
-    }
-  };
-
   return (
-    <header className="h-14 bg-white border-b border-[#e3e7ee] px-5 flex items-center justify-between gap-4 shrink-0 shadow-xs z-10">
-      {/* Global Clinical Search Bar */}
-      <div className="flex-1 max-w-2xl relative">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          value={searchVal}
-          onChange={(e) => setSearchVal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Search diseases, high-yield clinical stems, Harrison / Robbins references..."
-          className="w-full pl-9 pr-16 py-1.5 bg-[#f6f7f9] border border-[#e3e7ee] rounded-lg text-xs text-[#1c2430] placeholder-slate-400 focus:outline-none focus:border-[#0f8b8d] focus:bg-white transition-all"
-        />
-        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-white border border-[#e3e7ee] rounded">
-            ⌘K
-          </kbd>
-        </div>
+    <header className="top-app-bar relative h-14 bg-white border-b border-[#e3e7ee] px-3 sm:px-5 flex items-center justify-between gap-2 sm:gap-4 shrink-0 shadow-xs z-10">
+      {onOpenMobileNav && (
+        <button
+          type="button"
+          onClick={onOpenMobileNav}
+          aria-label="Open navigation menu"
+          title="Open navigation menu"
+          className="md:hidden -ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
+      <div className="md:hidden flex-1 min-w-0">
+        <h1 className="truncate text-[15px] font-semibold text-[#13294b] dark:text-slate-100">
+          {VIEW_TITLES[currentView] ?? 'Pulse Med'}
+        </h1>
       </div>
-
       {/* Right Tools & Profile Lockup */}
-      <div className="flex items-center gap-4 shrink-0">
+      <div className="ml-auto flex items-center gap-1 sm:gap-4 shrink-0">
         {/* Mock Pace Tracker */}
         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#e3f4f4] text-[#007072] text-xs font-semibold border border-[#8ff3f4]">
           <Gauge className="w-3.5 h-3.5 text-[#0f8b8d]" />
@@ -243,7 +256,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         {/* User Profile Lockup & Inline Editor */}
-        <div className="relative pl-3 border-l border-slate-200">
+        <div className="relative pl-2 sm:pl-3 border-l border-slate-200">
           <button
             type="button"
             onClick={handleOpenEditor}
@@ -333,6 +346,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
         </div>
       </div>
+
     </header>
   );
 };

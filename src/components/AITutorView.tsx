@@ -34,7 +34,8 @@ import {
   FileText,
   ImageIcon,
   Mic,
-  MicOff
+  MicOff,
+  SlidersHorizontal
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useVoiceInput } from './useVoiceInput.ts';
@@ -322,6 +323,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
   const [statusError, setStatusError] = useState<string | null>(null);
   const [provider, setProvider] = useState<AiProviderId | null>(() => getStoredActiveProvider());
   const [model, setModel] = useState<string>('');
+  const [phoneSettingsOpen, setPhoneSettingsOpen] = useState(false);
 
   // ----- chat state -----
   const [input, setInput] = useState<string>('');
@@ -861,23 +863,23 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
   }, [activeId, provider]);
 
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col max-w-7xl mx-auto w-full px-2">
+    <div className="h-[calc(100vh-64px)] max-md:h-[calc(100dvh-64px)] max-md:overflow-hidden flex flex-col max-w-7xl mx-auto w-full px-2 max-md:px-1">
       {/* Hero band */}
-      <div className="relative overflow-hidden mt-2 rounded-[20px] border border-slate-200 bg-gradient-to-br from-teal-50 via-white to-white shadow-sm dark:border-[#1f3a52] dark:from-[#0e2a3a] dark:via-[#0b1f33] dark:to-[#0b1f33]">
+      <div className="relative overflow-hidden mt-2 max-md:mt-0 max-md:rounded-xl rounded-[20px] border border-slate-200 bg-gradient-to-br from-teal-50 via-white to-white shadow-sm dark:border-[#1f3a52] dark:from-[#0e2a3a] dark:via-[#0b1f33] dark:to-[#0b1f33]">
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.10] dark:opacity-[0.12]" />
         <div
           aria-hidden
           className={`pointer-events-none absolute inset-0 opacity-[0.05] dark:opacity-[0.10] [mask-image:radial-gradient(circle_at_center,transparent_18%,black_115%)] ${reduceMotion ? 'hidden' : ''}`}
         />
-        <div className="relative p-4 sm:p-5 flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="relative p-4 sm:p-5 max-md:p-2 max-md:gap-2 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-md:gap-1">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-[16px] border border-[#0f8b8d]/40 bg-teal-100 dark:bg-teal-900/40 flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5 text-[#00696b]" />
+              <div className="w-11 h-11 max-md:w-8 max-md:h-8 rounded-[16px] border border-[#0f8b8d]/40 bg-teal-100 dark:bg-teal-900/40 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5 max-md:w-4 max-md:h-4 text-[#00696b]" />
               </div>
               <div className="min-w-0">
                 <div className=" tracking-wide text-[10px] uppercase text-[#00696b] dark:text-teal-300">Clinical AI Tutor</div>
-                <h1 className=" text-xl sm:text-2xl font-semibold text-slate-900 dark:text-white leading-tight truncate">Ask anything clinical</h1>
+                <h1 className="text-xl sm:text-2xl max-md:text-base font-semibold text-slate-900 dark:text-white leading-tight truncate">Ask anything clinical</h1>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
                   {provider && providerMap[provider]?.connected
                     ? `Live · ${provider} · ${model || getEffectiveModel(provider)}`
@@ -887,16 +889,16 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             </div>
             <button
               onClick={createConversation}
-              className="inline-flex items-center justify-center gap-1.5 rounded-[14px] border border-slate-900/80 dark:border-slate-500 bg-white dark:bg-slate-800 px-3.5 py-2 text-[11px] font-medium text-slate-900 dark:text-white hover:-translate-y-0.5 transition-transform shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 rounded-[14px] border border-slate-900/80 dark:border-slate-500 bg-white dark:bg-slate-800 px-3.5 py-2 max-md:min-h-10 max-md:px-2 max-md:py-1 text-[11px] font-medium text-slate-900 dark:text-white hover:-translate-y-0.5 transition-transform shrink-0"
             >
               <Plus className="w-3.5 h-3.5" /> New chat
             </button>
           </div>
 
-          <div className="flex flex-col xl:flex-row xl:items-center gap-3">
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-col xl:flex-row xl:items-center gap-3 max-md:gap-1">
+            <div className="flex items-center gap-2 flex-wrap max-md:flex-nowrap max-md:min-w-0 max-md:overflow-x-auto max-md:overscroll-x-contain max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
               {/* Persona segmented */}
-              <div className="inline-flex rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70">
+              <div className="inline-flex shrink-0 rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70">
                 {PERSONAS.map((p) => (
                   <button
                     key={p.id}
@@ -914,7 +916,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
               </div>
 
               {/* Provider (only connected ones) */}
-              <div className="relative">
+              <div className="relative max-md:hidden">
                 <select
                   value={provider ?? ''}
                   onChange={(e) => handleProviderChange(e.target.value as AiProviderId)}
@@ -937,7 +939,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
                 list="tutor-model-options"
                 placeholder="model id"
                 title={model || (provider ? getEffectiveModel(provider) : '')}
-                className="w-56 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-[11px] font-mono text-slate-800 dark:text-slate-100 rounded-[12px] px-2 py-2 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d] disabled:opacity-50 placeholder-slate-500"
+                className="w-56 max-md:hidden bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-[11px] font-mono text-slate-800 dark:text-slate-100 rounded-[12px] px-2 py-2 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d] disabled:opacity-50 placeholder-slate-500"
               />
               <datalist id="tutor-model-options">
                 {provider && providerMap[provider]?.connected && (
@@ -947,7 +949,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             </div>
 
             {/* Effort segmented (Min..Ultra), persisted */}
-            <div className="inline-flex rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70 shrink-0" title="Reasoning effort (subscription providers)">
+            <div className="inline-flex max-md:hidden rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70 shrink-0" title="Reasoning effort (subscription providers)">
               {EFFORT_LEVELS.map((level) => (
                 <button
                   key={level}
@@ -961,6 +963,18 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
                   {level}
                 </button>
               ))}
+            </div>
+            <div className="hidden max-md:flex max-md:flex-col max-md:items-start">
+              <button type="button" onClick={() => setPhoneSettingsOpen((open) => !open)} aria-expanded={phoneSettingsOpen} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700">
+                <SlidersHorizontal className="h-3 w-3" /> {(provider || 'AI').toLowerCase()} - {effort}
+              </button>
+              {phoneSettingsOpen && <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <select value={provider ?? ''} onChange={(e) => handleProviderChange(e.target.value as AiProviderId)} disabled={connectedCount === 0} className="max-w-32 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px]">
+                  {connectedCount === 0 && <option value="">No provider</option>}{connectedProviders.map((id) => <option key={id} value={id}>{id}</option>)}
+                </select>
+                <input value={model || (provider ? getEffectiveModel(provider) : '')} onChange={(e) => handleModelChange(e.target.value)} disabled={!provider} list="tutor-model-options" placeholder="model" className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px]" />
+                {EFFORT_LEVELS.map((level) => <button key={level} onClick={() => handleEffortChange(level)} className={`rounded-full px-2 py-1 text-[10px] ${effort === level ? 'bg-[#001432] text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>{level}</button>)}
+              </div>}
             </div>
           </div>
         </div>
@@ -1009,7 +1023,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
       )}
 
       {/* Main row: conversation list + chat */}
-      <div className="flex-1 min-h-0 flex gap-3 mt-2 pb-2">
+      <div className="flex-1 min-h-0 flex gap-3 mt-2 pb-2 max-md:mt-1 max-md:pb-0 max-md:overflow-hidden">
         {/* Conversation list */}
         <div className="hidden md:flex flex-col w-60 shrink-0 bg-white rounded-2xl border border-slate-200 shadow-sm">
           <button
@@ -1083,7 +1097,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
         </div>
 
         {/* Chat column */}
-        <div className="flex-1 min-w-0 flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm max-md:rounded-xl max-md:overflow-hidden">
           {/* Status error banner */}
           {statusError && (
             <div className="m-3 mb-0 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
@@ -1099,7 +1113,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
           )}
 
           {/* Messages */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4 max-md:p-2 max-md:space-y-2">
             {messages.length === 0 && (
               <div className="relative h-full flex flex-col items-center justify-center text-center space-y-3 py-10 overflow-hidden rounded-[20px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                 <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.10] dark:opacity-[0.12]" />
@@ -1118,9 +1132,9 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
 
             {messages.map((msg, index) => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`group max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+                <div className={`group max-w-[85%] max-md:max-w-[94%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
                   <div
-                    className={`px-4 py-3 rounded-[20px] text-xs leading-relaxed ${msg.role === 'user'
+                    className={`px-4 py-3 max-md:px-3 max-md:py-2 rounded-[20px] text-xs max-md:text-[14px] leading-relaxed ${msg.role === 'user'
                       ? 'bg-white border border-slate-200 text-slate-900 rounded-tr-sm'
                       : msg.isError
                         ? 'bg-rose-50 border border-rose-300 text-rose-900 dark:text-rose-100 rounded-tl-sm ring-4 ring-[rgba(255,95,109,0.15)]'
@@ -1273,13 +1287,13 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
 
           {/* Quick prompts */}
           {messages.length === 0 && !loading && (
-            <div className="px-4 pb-2 flex flex-wrap gap-2">
+            <div className="px-4 pb-2 flex flex-wrap gap-2 max-md:min-w-0 max-md:px-2 max-md:pb-1 max-md:flex-nowrap max-md:overflow-x-auto max-md:overscroll-x-contain max-md:whitespace-nowrap max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
               {quickPrompts.map((p) => (
                 <button
                   key={p}
                   onClick={() => send(p)}
                   disabled={!provider || connectedCount === 0}
-                  className="text-[11px] px-3 py-1.5 rounded-[12px] border border-slate-900/70 bg-white text-slate-900 font-medium hover:bg-teal-50 hover:-translate-y-0.5 transition-transform disabled:opacity-40 [clip-path:polygon(0%_15%,8%_0%,20%_12%,32%_0%,45%_10%,58%_0%,72%_10%,86%_0%,100%_14%,92%_30%,100%_48%,90%_62%,100%_80%,84%_92%,70%_84%,56%_100%,42%_88%,28%_100%,14%_88%,0%_100%,8%_78%,0%_60%,10%_44%)]"
+                  className="box-border h-9 min-h-9 px-3 py-0 max-md:h-9 max-md:min-h-9 max-md:shrink-0 rounded-full border border-slate-300 bg-white text-slate-900 text-[11px] font-medium whitespace-nowrap hover:bg-teal-50 transition-colors disabled:opacity-40"
                 >
                   {p}
                 </button>
@@ -1449,8 +1463,23 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             </div>
           )}
 
+          {contextQuestion && !contextRemoved && (
+            <div className="mt-2 flex flex-nowrap gap-1.5 px-2 pb-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {QUICK_ACTIONS.map((action) => (
+                <button
+                  key={action.label}
+                  onClick={() => send(action.prompt)}
+                  disabled={loading || connectedCount === 0}
+                  className="h-9 min-h-9 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 whitespace-nowrap hover:text-[#00696b] hover:border-[#0f8b8d]/40 disabled:opacity-40"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Sticky composer */}
-          <div className="sticky bottom-0 z-10 p-3 border-t border-slate-100  bg-white  flex items-end gap-2 rounded-b-2xl">
+          <div className="sticky bottom-0 z-10 p-3 max-md:p-2 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-slate-100 bg-white flex items-end gap-2 rounded-b-2xl max-md:rounded-b-xl max-md:shrink-0">
             <button
               onClick={() => {
                 const next = !imageEnabled;
@@ -1461,7 +1490,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
                 ? 'Illustrations ON — a verified clinical image may be added to explanations. Click to turn off.'
                 : 'Illustrations OFF — explanations will be text only. Click to turn on.'}
               aria-pressed={imageEnabled}
-              className={`p-2.5 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 transition-transform hover:-translate-y-0.5 ${
+              className={`p-2.5 max-md:min-h-11 max-md:min-w-10 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 transition-transform hover:-translate-y-0.5 ${
                 imageEnabled
                   ? 'border-[#0f8b8d]/40 bg-teal-50 text-[#00696b]'
                   : 'bg-slate-50  border-slate-200  text-slate-400   '
@@ -1474,7 +1503,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
               disabled={loading}
               title={recording ? 'Stop recording and transcribe' : 'Speak your question (transcribed on this device)'}
               aria-pressed={recording}
-              className={`p-2.5 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-transform hover:-translate-y-0.5 ${
+              className={`p-2.5 max-md:min-h-11 max-md:min-w-10 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-transform hover:-translate-y-0.5 ${
                 recording
                   ? 'bg-rose-50  border-rose-300  text-rose-700  animate-pulse'
                   : 'bg-slate-50  border-slate-200  text-slate-500   '
@@ -1485,7 +1514,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             <button
               onClick={openAttachPanel}
               title="Attach a page from your PDF library as context"
-              className={`p-2.5 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 transition-transform hover:-translate-y-0.5 ${
+              className={`p-2.5 max-md:min-h-11 max-md:min-w-10 rounded-[14px] border text-xs font-medium flex items-center gap-1.5 shrink-0 transition-transform hover:-translate-y-0.5 ${
                 attachOpen || attachments.length
                   ? 'border-[#0f8b8d]/40 bg-teal-50 text-[#00696b]'
                   : 'bg-slate-50  border-slate-200  text-slate-500   '
@@ -1497,7 +1526,14 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                if (window.matchMedia('(max-width: 767px)').matches) {
+                  const el = e.currentTarget;
+                  el.style.height = '44px';
+                  el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -1505,17 +1541,20 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
                 }
               }}
               rows={2}
-              placeholder={connectedCount === 0
-                ? 'Connect an AI provider in Settings to start chatting…'
-                : attachments.length > 0
-                  ? `Ask about page ${attachments[0].pageNumber} of ${attachments[0].docTitle.slice(0, 40)}… (Enter to send)`
-                  : contextQuestion ? 'Ask about the attached question… (Enter to send, Shift+Enter for a new line)' : 'Type a clinical question… (Enter to send, Shift+Enter for a new line)'}
-              className="flex-1 resize-none text-xs text-slate-900 px-3.5 py-2.5 rounded-[16px] bg-slate-50 border border-slate-200 focus:outline-none focus:border-[#0f8b8d]/60 focus:ring-4 focus:ring-[rgba(142,197,252,0.15)] placeholder-slate-400 dark:placeholder-[#8B8580]"
+              onInput={(e) => { if (window.matchMedia('(max-width: 767px)').matches) { const el = e.currentTarget; el.style.height = '44px'; el.style.height = `${Math.min(el.scrollHeight, 112)}px`; } }}
+              placeholder={window.matchMedia('(max-width: 767px)').matches
+                ? 'Ask a clinical question...'
+                : connectedCount === 0
+                  ? 'Connect an AI provider in Settings to start chatting…'
+                  : attachments.length > 0
+                    ? `Ask about page ${attachments[0].pageNumber} of ${attachments[0].docTitle.slice(0, 40)}… (Enter to send)`
+                    : contextQuestion ? 'Ask about the attached question… (Enter to send, Shift+Enter for a new line)' : 'Type a clinical question… (Enter to send, Shift+Enter for a new line)'}
+              className="flex-1 min-w-0 min-h-11 max-md:min-h-11 max-md:max-h-28 max-md:py-2 max-md:text-[14px] resize-none text-xs text-slate-900 px-3.5 py-2.5 rounded-[16px] bg-slate-50 border border-slate-200 focus:outline-none focus:border-[#0f8b8d]/60 focus:ring-4 focus:ring-[rgba(142,197,252,0.15)] placeholder-slate-400 dark:placeholder-[#8B8580]"
             />
             <button
               onClick={() => send(input)}
               disabled={loading || !input.trim() || connectedCount === 0}
-              className="px-4 py-2.5 rounded-[14px] bg-[#0f8b8d] hover:bg-[#00696b] text-white hover:-translate-y-[3px] hover:scale-[1.03] disabled:opacity-40 text-xs font-medium flex items-center gap-2 shrink-0 transition-transform"
+              className="px-4 py-2.5 min-h-11 max-md:px-3 rounded-[14px] bg-[#0f8b8d] hover:bg-[#00696b] text-white hover:-translate-y-[3px] hover:scale-[1.03] disabled:opacity-40 text-xs font-medium flex items-center gap-2 shrink-0 transition-transform"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               Send
@@ -1523,20 +1562,6 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
           </div>
           {voiceStatus && (
             <p className={`mt-1.5 text-[11px] ${recording ? 'text-rose-700' : 'text-slate-500'}`}>{voiceStatus}</p>
-          )}
-          {contextQuestion && !contextRemoved && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {QUICK_ACTIONS.map((action) => (
-                <button
-                  key={action.label}
-                  onClick={() => send(action.prompt)}
-                  disabled={loading || connectedCount === 0}
-                  className="px-2.5 py-1.5 rounded-full border border-slate-200 bg-white text-[11px] font-semibold text-slate-600 hover:text-[#00696b] hover:border-[#0f8b8d]/40 disabled:opacity-40"
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
           )}
         </div>
       </div>

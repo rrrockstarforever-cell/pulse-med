@@ -9,6 +9,449 @@
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+@layer base {
+  @media (max-width: 767px) {
+    /* Phone gradient cards lose their gradient image, so white text can land on a white page.
+       Give those cards a solid teal fallback; component utility classes still win over this base rule. */
+    .app-shell main [class*="bg-gradient-"][class*="text-white"],
+    .app-shell main [class*="bg-linear-"][class*="text-white"] {
+      background-color: #0f6b6d;
+    }
+
+    .app-shell.dark main [class*="bg-gradient-"][class*="text-white"],
+    .app-shell.dark main [class*="bg-linear-"][class*="text-white"] {
+      background-color: #0d4f52;
+    }
+  }
+}
+
+/* Phone safety net: the views are written for a desktop canvas, so stop any
+   wide table/pre/image from forcing the whole page sideways on a phone. */
+@media (max-width: 767px) {
+  /* Keep utility-sized microcopy legible on phone screens. */
+  :where([class*="text-[9px]"], [class*="text-[10px]"]) {
+    font-size: 11px !important;
+  }
+
+  /* Touch-sized controls in the page and overlays. Compact controls and app bars
+     keep their deliberately smaller dimensions. */
+  :where(
+    main button,
+    main [role="button"],
+    main select,
+    main input[type="checkbox"],
+    main input[type="radio"],
+    main label:has(input[type="checkbox"]),
+    main label:has(input[type="radio"]),
+    main a[role="button"],
+    main a[class*="button"],
+    main a[class*="btn"],
+    [role="dialog"] button,
+    [role="dialog"] [role="button"],
+    [role="dialog"] select,
+    [role="dialog"] input[type="checkbox"],
+    [role="dialog"] input[type="radio"],
+    [role="dialog"] label:has(input[type="checkbox"]),
+    [role="dialog"] label:has(input[type="radio"]),
+    [role="dialog"] a[role="button"],
+    [role="dialog"] a[class*="button"],
+    [role="dialog"] a[class*="btn"],
+    .mobile-drawer-panel button,
+    .mobile-drawer-panel [role="button"],
+    .mobile-drawer-panel select,
+    .mobile-drawer-panel input[type="checkbox"],
+    .mobile-drawer-panel input[type="radio"],
+    .mobile-drawer-panel label:has(input[type="checkbox"]),
+    .mobile-drawer-panel label:has(input[type="radio"]),
+    .mobile-drawer-panel a[role="button"],
+    .mobile-drawer-panel a[class*="button"],
+    .mobile-drawer-panel a[class*="btn"],
+    [class*="bottom-sheet"] button,
+    [class*="bottom-sheet"] [role="button"],
+    [class*="bottom-sheet"] select,
+    [class*="bottom-sheet"] input[type="checkbox"],
+    [class*="bottom-sheet"] input[type="radio"],
+    [class*="bottom-sheet"] label:has(input[type="checkbox"]),
+    [class*="bottom-sheet"] label:has(input[type="radio"]),
+    [class*="bottom-sheet"] a[role="button"],
+    [class*="bottom-sheet"] a[class*="button"],
+    [class*="bottom-sheet"] a[class*="btn"]
+  ):not([data-compact]):not(.mobile-bottom-nav *):not(.test-runner-action-bar *):not([class*="action-bar"] *) {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  /* Decorative sunburst/ray backgrounds are noise on a phone screen. */
+  [class*="repeating-conic-gradient"],
+  main .pointer-events-none.absolute.inset-0[class*="opacity-["] {
+    display: none !important;
+  }
+
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  main {
+    overflow-x: hidden;
+  }
+
+  main table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  main pre {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  img,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* No visible scrollbars on phones; every element still scrolls by touch. */
+  * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  html,
+  body,
+  #root,
+  .app-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .app-scroll {
+    height: 100vh !important;
+    height: 100dvh !important;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .drawer-open .app-scroll {
+    overflow: hidden !important;
+  }
+
+  .mobile-drawer-panel {
+    touch-action: pan-y;
+  }
+
+  .mobile-drawer-panel > aside {
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  /* Dense native-app phone type scale: 11/12/14/16/18/22 max. */
+  body {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  [class*="text-[8px]"],
+  [class*="text-[9px]"],
+  [class*="text-[10px]"],
+  [class*="text-[11px]"] {
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+  }
+
+  [class*="text-[12px]"],
+  [class*="text-[13px]"],
+  .text-xs {
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+  }
+
+  .text-sm {
+    font-size: 14px !important;
+    line-height: 1.4 !important;
+  }
+
+  .text-base {
+    font-size: 15px !important;
+    line-height: 1.4 !important;
+  }
+
+  .text-lg {
+    font-size: 16px !important;
+    line-height: 1.4 !important;
+  }
+
+  .text-xl,
+  .text-2xl,
+  [class*="text-[20px]"],
+  [class*="text-[21px]"] {
+    font-size: 18px !important;
+    line-height: 1.25 !important;
+  }
+
+  .text-3xl,
+  .text-4xl,
+  .text-5xl,
+  .text-6xl,
+  [class*="text-[22px]"],
+  [class*="text-[24px]"],
+  [class*="text-[26px]"],
+  [class*="text-[28px]"],
+  [class*="text-[30px]"],
+  [class*="text-[32px]"],
+  [class*="text-[34px]"],
+  [class*="text-[36px]"] {
+    font-size: 22px !important;
+    line-height: 1.2 !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin-top: 0.35em !important;
+    margin-bottom: 0.25em !important;
+    line-height: 1.25 !important;
+  }
+
+  h1,
+  h1[class*="text-3xl"],
+  h1[class*="text-4xl"],
+  h1[class*="text-5xl"],
+  h1[class*="text-6xl"] {
+    font-size: 18px !important;
+  }
+
+  h2 {
+    font-size: 16px !important;
+  }
+
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-size: 15px !important;
+  }
+
+  /* 36px visual buttons, with a 44px touch area where padding is not set. */
+  button,
+  [role="button"],
+  summary,
+  select {
+    min-height: 36px;
+  }
+
+  button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]),
+  [role="button"]:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) {
+    padding: 10px 12px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+    min-height: 40px;
+  }
+
+  /* Tailwind p-5/p-6/p-8 on rounded cards: compact 14px inner padding. */
+  main div[class*="rounded-"][class~="p-5"],
+  main div[class*="rounded-"][class~="p-6"],
+  main div[class*="rounded-"][class~="p-8"] {
+    padding: 14px !important;
+    border-radius: 12px !important;
+  }
+
+  main [class~="gap-6"],
+  main [class~="gap-8"] {
+    gap: 12px !important;
+  }
+
+  main [class~="space-y-6"] > :not([hidden]) ~ :not([hidden]),
+  main [class~="space-y-8"] > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 12px !important;
+  }
+
+  /* Native app feel: flat page, comfortable reading, no accidental text selection. */
+  .app-shell {
+    background-color: #f6f8fb;
+    background-image: none !important;
+  }
+
+  main {
+    max-width: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    font-size: 14px !important;
+    line-height: 1.4 !important;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  main p,
+  main li {
+    line-height: 1.4;
+  }
+
+  .app-shell.has-bottom-nav main {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom)) !important;
+  }
+
+  button,
+  [role="button"],
+  nav,
+  .mobile-bottom-nav {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  main input,
+  main textarea,
+  main [contenteditable="true"],
+  main [class*="question"],
+  main [class*="Question"],
+  main [class*="explanation"],
+  main [class*="Explanation"],
+  main [class*="vignette"],
+  main [class*="stem"],
+  main .prose,
+  main .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html,
+  body,
+  .app-shell,
+  main {
+    overscroll-behavior: contain;
+  }
+
+  button:active,
+  a:active,
+  [role="button"]:active {
+    transform: scale(0.98);
+    transition: transform 120ms ease, background-color 120ms ease, opacity 120ms ease;
+  }
+
+  /* Reduce decorative background layers; keeping them at low opacity is safer than hiding them. */
+  main .pointer-events-none.absolute.inset-0 {
+    opacity: 0.35;
+  }
+
+  .app-shell [class*="bg-linear-"],
+  .app-shell [class*="bg-gradient-"],
+  .app-shell [class*="bg-[conic"],
+  .app-shell [class*="conic-gradient"] {
+    background-image: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Phone aesthetic layer
+   One calm, dense look for every phone screen: soft grey page, white cards with
+   a hairline border, one teal accent, small-caps labels. This block only changes
+   shape, shadow, font-family and spacing. Text and background colours still come
+   from the utilities and from the dark section further down, so dark mode stays
+   readable.
+--------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  /* Page: soft grey instead of the old blue-white tint. */
+  .app-shell {
+    background-color: #f6f8fb;
+  }
+
+  /* Dark page. More specific than the plain `.dark` rule below, so this wins. */
+  .dark .app-shell,
+  .app-shell.dark {
+    background-color: #0b1220 !important;
+  }
+
+  /* Code-style text looks like a developer tool: use the app font, even digits. */
+  main .font-mono,
+  main [class*="font-mono"],
+  .mobile-drawer-panel .font-mono {
+    font-family: var(--font-sans) !important;
+    letter-spacing: normal !important;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Small caps labels: a little air between the letters. */
+  main .uppercase {
+    letter-spacing: 0.06em !important;
+  }
+
+  /* Cards: one hairline border instead of a 2px outline. */
+  main :is(div, section, article)[class~="border-2"] {
+    border-width: 1px !important;
+  }
+
+  /* Cards: 12px corners instead of 16/24/32px. Buttons, media, rounded pills,
+     fixed and sticky bars are left alone. */
+  main :is(div, section, article):is(
+      [class~="rounded-2xl"],
+      [class~="rounded-3xl"],
+      [class*="rounded-[20px]"],
+      [class*="rounded-[22px]"],
+      [class*="rounded-[24px]"],
+      [class*="rounded-[26px]"],
+      [class*="rounded-[28px]"],
+      [class*="rounded-[30px]"],
+      [class*="rounded-[32px]"]
+    ):not([class*="rounded-full"]):not([class~="fixed"]):not([class~="sticky"]) {
+    border-radius: 12px !important;
+  }
+
+  /* Cards: a whisper shadow instead of heavy drop shadows. */
+  main :is(div, section, article):is(
+      [class~="shadow-lg"],
+      [class~="shadow-xl"],
+      [class~="shadow-2xl"],
+      [class*="shadow-[0"],
+      [class*="shadow-[inset"]
+    ):not([class~="fixed"]):not([class~="sticky"]) {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+  }
+
+  /* Bottom tabs fade on press instead of shrinking like a web button. */
+  .mobile-bottom-nav button:active {
+    transform: none;
+  }
+}
+
+@media (hover: none) {
+  main [class*="hover:-translate"]:hover:not(:active),
+  main [class*="hover:translate"]:hover:not(:active),
+  main [class*="hover:scale"]:hover:not(:active) {
+    transform: none !important;
+  }
+}
+
+@media (display-mode: standalone) {
+  .top-app-bar {
+    padding-top: env(safe-area-inset-top);
+    height: calc(56px + env(safe-area-inset-top));
+  }
+}
+
 /* Custom clinical focus scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
@@ -381,4 +824,8 @@
 .page-enter { animation: page-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 @media (prefers-reduced-motion: reduce) {
   .page-enter { animation: none; }
+  .mobile-drawer-panel,
+  .mobile-drawer-backdrop {
+    transition: none !important;
+  }
 }

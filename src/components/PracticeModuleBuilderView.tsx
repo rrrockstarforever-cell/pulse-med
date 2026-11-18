@@ -11,6 +11,7 @@ import {
   Square,
   MessageSquarePlus,
   ChevronsUpDown,
+  ChevronDown,
   Save,
   Trash2,
   Wand2,
@@ -133,13 +134,13 @@ const MAX_FILL_ROUNDS = 60;
 
 // ---------------------------------------------------------------- small pieces
 
-const Row: React.FC<{ label: string; hint?: string; children: React.ReactNode; last?: boolean }> = ({
-  label, hint, children, last,
+const Row: React.FC<{ label: string; hint?: string; children: React.ReactNode; last?: boolean; phoneFlat?: boolean }> = ({
+  label, hint, children, last, phoneFlat,
 }) => (
-  <div className={`py-5 ${last ? '' : 'border-b border-slate-100'}`}>
-    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
-      <h3 className="text-sm font-medium tracking-wide text-slate-900">{label}</h3>
-      {hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+  <div className={`py-3 sm:py-5 max-md:py-1.5 ${last ? '' : 'border-b border-slate-100'}${phoneFlat ? ' max-md:flex max-md:items-center max-md:justify-between max-md:gap-3' : ''}`}>
+    <div className={`flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 mb-2 sm:mb-3 ${phoneFlat ? 'max-md:mb-0 max-md:flex-col max-md:items-start max-md:gap-y-0.5' : 'max-md:mb-1.5'}`}>
+      <h3 className="text-xs sm:text-sm font-medium tracking-wide text-slate-900 max-md:text-[14px]! max-md:font-semibold">{label}</h3>
+      {hint && <span className="text-[10px] sm:text-[11px] text-slate-500 max-md:text-[12px]!">{hint}</span>}
     </div>
     {children}
   </div>
@@ -151,7 +152,7 @@ const Radio: React.FC<{
   label: string;
   hint?: string;
 }> = ({ checked, onClick, label, hint }) => (
-  <button type="button" onClick={onClick} className="group flex items-start gap-2 rounded-xl -mx-2 px-2 py-1 text-left cursor-pointer  transition-colors">
+  <button type="button" onClick={onClick} className="group flex min-h-[44px] items-center gap-2 rounded-xl -mx-2 px-2 py-1.5 text-left cursor-pointer transition-colors max-md:min-h-[40px] max-md:py-1.5 max-md:px-2 sm:min-h-0 sm:items-start sm:py-1">
     <span
       className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
         checked ? 'border-[#0f8b8d]' : 'border-slate-400'
@@ -160,8 +161,8 @@ const Radio: React.FC<{
       {checked && <span className="h-2 w-2 rounded-full bg-[#0f8b8d]" />}
     </span>
     <span>
-      <span className={`block text-xs font-semibold ${checked ? 'text-slate-900' : 'text-slate-700'}`}>{label}</span>
-      {hint && <span className="block text-[10px] text-slate-500 leading-snug mt-0.5 max-w-[230px]">{hint}</span>}
+      <span className={`block text-xs font-semibold max-md:text-[14px]! ${checked ? 'text-slate-900' : 'text-slate-700'}`}>{label}</span>
+      {hint && <span className="block text-[10px] text-slate-500 leading-snug mt-0.5 max-w-[230px] max-md:hidden">{hint}</span>}
     </span>
   </button>
 );
@@ -173,10 +174,10 @@ const Chip: React.FC<{ active: boolean; onClick: () => void; children: React.Rea
     type="button"
     onClick={onClick}
     title={title}
-    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
+    className={`inline-flex min-h-[40px] items-center justify-center px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors max-md:shrink-0 max-md:whitespace-nowrap max-md:min-h-[40px] max-md:px-3 max-md:py-0 max-md:text-[13px]! sm:inline-block sm:min-h-0 sm:px-3 sm:py-1.5 ${
       active
-        ? 'bg-[#0f8b8d] border-[#0f8b8d] text-white'
-        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+        ? 'bg-[#0f8b8d] border-[#0f8b8d] text-white max-md:bg-[#0f8b8d]/10 max-md:border-[#0f8b8d] max-md:text-[#0f8b8d] max-md:dark:bg-teal-400/10 max-md:dark:border-teal-400/70 max-md:dark:text-teal-300'
+        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60 max-md:dark:text-slate-300'
     }`}
   >
     {children}
@@ -274,6 +275,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
   const [showSaveRow, setShowSaveRow] = useState(false);
   const [generatingProfile, setGeneratingProfile] = useState(false);
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
+  const [phoneInstrOpen, setPhoneInstrOpen] = useState(false);
 
   // Live connection state for the active engine. A stored provider id survives sign-out,
   // so the builder must not promise to generate with an engine the server cannot reach.
@@ -713,8 +715,10 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       if (imageMode === 'only') {
         const statusResponse = await fetch('/api/oauth/status');
         const status = statusResponse.ok ? await statusResponse.json() : null;
-        if (getActiveProvider() !== 'gemini' || !status?.providers?.gemini?.connected) {
-          throw new AiError('Image questions need Gemini as the active AI provider, because the model that writes each question also checks its picture.', 'not_connected');
+        // The model that writes each question also checks its picture, so it must be able to read images.
+        const imageActive = getActiveProvider();
+        if (!imageActive || !['gemini', 'chatgpt', 'claude', 'grok', 'deeprelay'].includes(imageActive) || !status?.providers?.[imageActive]?.connected) {
+          throw new AiError('Image questions need ChatGPT, Claude, Grok, DeepSeek (DeepRelay) or Gemini as the active AI provider, because the model that writes each question also checks its picture.', 'not_connected');
         }
 
         setProgressDetail((d) => ({ ...d, imageFirst: customTopic ? `finding curated images matching “${customTopic}”…` : 'finding curated image-bank candidates…' }));
@@ -766,6 +770,8 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                 difficultyTier,
                 difficultySubLevel,
                 optionCount,
+                provider: imageActive,
+                model: getEffectiveModel(imageActive),
                 signal: controller.signal,
                 onReject: (code) => {
                   rejectionReported = true;
@@ -931,12 +937,14 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
               const image = candidates[i];
               setProgressDetail((d) => ({ ...d, imageFirst: `${done}/${candidates.length} — ${image.ground_truth}` }));
               try {
+                const mixedProvider = getActiveProvider();
                 const made = await generateImageFirstQuestion({
                   image,
                   exam: selectedExam,
                   difficultyTier,
                   difficultySubLevel,
                   optionCount,
+                  ...(mixedProvider ? { provider: mixedProvider, model: getEffectiveModel(mixedProvider) } : {}),
                   signal: controller.signal,
                 });
                 results[i] = made ? made.question : null;
@@ -1018,7 +1026,8 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       // questions kept, up to the number asked for. No separate answer check or QA review runs here.
       // A typed topic is answered from every specialty that asks it, so its questions carry their own specialty names
       // (Pathology, Surgery, Radiodiagnosis...). The "belongs to a selected specialty" filter is only for picked specialties.
-      launchWith(merged.slice(0, targetCount), labels, chosenSubtopics, Boolean(customTopic) || factPlan.length > 0);
+      // After Continue, targetCount is only the part still to be made, so the questions kept earlier are added back.
+      launchWith(merged.slice(0, (base ? base.length : 0) + targetCount), labels, chosenSubtopics, Boolean(customTopic) || factPlan.length > 0);
     } catch (err: any) {
       const aborted = controller.signal.aborted || (err instanceof AiError && err.kind === 'aborted');
       const message = aborted
@@ -1250,88 +1259,104 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
   const activeModalRow = topicModal ? subjectList.find((r) => r.key === topicModal.key) ?? null : null;
   const durationMin = Math.max(1, Math.round(questionCount * 1.1));
 
+  const handleLaunchClick = () => {
+    if (imageMode !== 'only' && (!activeProvider || providerKnownDown)) {
+      onNavigate('settings');
+      return;
+    }
+    if (!canLaunch) {
+      setGenState({
+        busy: false, generated: 0, total: 0, batch: 0, totalBatches: 0, dropped: 0,
+        error: 'Pick at least one speciality (or choose All) before building a module.',
+      });
+      document.getElementById('speciality-picker')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    handleLaunch();
+  };
+
   return (
-    <div className="relative isolate max-w-6xl mx-auto overflow-hidden rounded-[24px] px-4 sm:px-6 py-6 text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-[#0a1220]">
+    <div className="relative isolate max-w-6xl mx-auto overflow-hidden rounded-[20px] sm:rounded-[24px] px-4 sm:px-6 py-4 sm:py-6 text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-[#0a1220] max-md:overflow-x-clip max-md:bg-[#f6f8fb] max-md:dark:bg-[#0b1220] max-md:px-3 max-md:py-2 max-md:pb-[calc(52px+64px+env(safe-area-inset-bottom)+0.75rem)] max-md:rounded-none max-md:[&_button]:min-h-[40px]">
       {/* Decorative  layers stay behind content */}
-      <div aria-hidden className="pointer-events-none absolute inset-0  bg-[length:18px_18px] opacity-80 " />
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-[repeating-conic-gradient(from_0deg_at_50%_50%,rgba(20,17,15,0.05)_0deg_1deg,transparent_1deg_18deg)] opacity-40 motion-safe:animate-[spin_45s_linear_infinite] dark:bg-[repeating-conic-gradient(from_0deg_at_50%_50%,rgba(0,204,255,0.05)_0deg_1deg,transparent_1deg_18deg)]" />
+      <div aria-hidden className="hidden sm:block pointer-events-none absolute inset-0  bg-[length:18px_18px] opacity-80 " />
+      <div aria-hidden className="hidden sm:block pointer-events-none absolute inset-0 bg-[repeating-conic-gradient(from_0deg_at_50%_50%,rgba(20,17,15,0.05)_0deg_1deg,transparent_1deg_18deg)] opacity-40 motion-safe:animate-[spin_45s_linear_infinite] dark:bg-[repeating-conic-gradient(from_0deg_at_50%_50%,rgba(0,204,255,0.05)_0deg_1deg,transparent_1deg_18deg)]" />
       {/* Mission header + step rail */}
-      <div className="relative z-10 mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.22em] text-[#00696b] dark:text-[#8EC5FC]">
+      <div className="relative z-10 mb-3 sm:mb-6 flex flex-wrap items-start justify-between gap-2 sm:gap-4 max-md:mb-2">
+        <div className="max-md:hidden">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-[#00696b] dark:text-[#8EC5FC] sm:gap-2 sm:px-3 sm:py-1 sm:tracking-[0.22em]">
             <Target className="w-3.5 h-3.5" /> Mission
           </div>
-          <h1 className="mt-2 text-3xl font-medium tracking-tight text-slate-900 dark:text-slate-100">Build Your Module</h1>
-          <p className="mt-1 max-w-xl text-sm text-[#5F5A52] dark:text-[#B8B2A7]">Pick the exam, focus the blueprint, then launch your custom MCQ set.</p>
+          <h1 className="mt-1 sm:mt-2 text-xl sm:text-3xl font-medium tracking-tight text-slate-900 dark:text-slate-100">Build Your Module</h1>
+          <p className="hidden sm:block mt-1 max-w-xl text-sm text-[#5F5A52] dark:text-[#B8B2A7]">Pick the exam, focus the blueprint, then launch your custom MCQ set.</p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#FFFDF6]/90 dark:bg-[#0E171B]/90 border border-[#D8D4CA] dark:border-[#213238] shadow-[2px_2px_0_rgba(20,17,15,0.12)] dark:shadow-[2px_2px_0_rgba(0,204,255,0.12)]">
+        <div className="flex flex-col items-end gap-2 max-md:w-full max-md:items-stretch max-md:gap-0">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#FFFDF6]/90 dark:bg-[#0E171B]/90 border border-[#D8D4CA] dark:border-[#213238] shadow-[2px_2px_0_rgba(20,17,15,0.12)] dark:shadow-[2px_2px_0_rgba(0,204,255,0.12)] max-md:w-full max-md:bg-white max-md:dark:bg-[#111a2b] max-md:border-slate-200/70 max-md:dark:border-slate-700/60 max-md:shadow-none max-md:p-0.5 max-md:rounded-lg">
             {(['NEET_PG', 'INI_CET'] as ExamType[]).map((examKey) => (
               <button
                 key={examKey}
                 onClick={() => { setSelectedExam(examKey); onExamChange?.(examKey); setSpecialtyAll(false); }}
-                className={`min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
+                className={`min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all max-md:flex-1 max-md:min-h-[36px] max-md:rounded-md max-md:text-[13px]! ${
                   selectedExam === examKey
-                    ? 'bg-[#0f8b8d] text-slate-900 shadow-[2px_2px_0_rgba(3,4,9,0.18)]'
-                    : 'text-[#5F5A52] dark:text-[#B8B2A7] hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#0f8b8d] text-slate-900 shadow-[2px_2px_0_rgba(3,4,9,0.18)] max-md:bg-[#0f8b8d]/10 max-md:text-[#0f8b8d] max-md:dark:bg-teal-400/10 max-md:dark:text-teal-300 max-md:shadow-none'
+                    : 'text-[#5F5A52] dark:text-[#B8B2A7] hover:text-slate-900 dark:hover:text-white max-md:text-slate-600 max-md:dark:text-slate-300'
                 }`}
               >
                 {EXAM_LABEL[examKey]}
               </button>
             ))}
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-[#D8D4CA] dark:border-[#213238] bg-[#FFFDF6]/80 dark:bg-[#0E171B]/80 px-2 py-1 text-[10px] font-semibold text-[#4B4640] dark:text-[#C9C3B8]">
+          <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-[#D8D4CA] dark:border-[#213238] bg-[#FFFDF6]/80 dark:bg-[#0E171B]/80 px-2 py-1 text-[10px] font-semibold text-[#4B4640] dark:text-[#C9C3B8] max-md:hidden">
             <span className="h-1.5 w-1.5 rounded-full bg-[#0f8b8d]" /> Step rail
           </div>
         </div>
       </div>
 
-      <div className="relative z-10 mb-5 grid grid-cols-3 gap-2 rounded-2xl border border-[#D8D4CA] dark:border-[#213238] bg-[#FFFDF6]/80 dark:bg-[#0E171B]/80 p-2 shadow-[3px_3px_0_rgba(20,17,15,0.10)] dark:shadow-[3px_3px_0_rgba(0,204,255,0.10)]">
+      <div className="relative z-10 mb-3 sm:mb-5 grid grid-cols-3 gap-1 sm:gap-2 rounded-xl sm:rounded-2xl border border-[#D8D4CA] dark:border-[#213238] bg-[#FFFDF6]/80 dark:bg-[#0E171B]/80 p-1 sm:p-2 shadow-[3px_3px_0_rgba(20,17,15,0.10)] dark:shadow-[3px_3px_0_rgba(0,204,255,0.10)] max-md:hidden">
         {[
           ['01', 'Exam & Mode', 'Set the arena'],
           ['02', 'Focus & Difficulty', 'Aim the blueprint'],
           ['03', 'Style & Launch', 'Load the run'],
         ].map(([num, title, sub]) => (
-          <div key={num} className="rounded-xl border border-[#8EC5FC]/50 dark:border-[#31464D] bg-[#FFF8E1]/80 dark:bg-[#0A1419]/80 px-2.5 py-2">
+          <div key={num} className="rounded-lg sm:rounded-xl border border-[#8EC5FC]/50 dark:border-[#31464D] bg-[#FFF8E1]/80 dark:bg-[#0A1419]/80 px-1.5 py-1 sm:px-2.5 sm:py-2">
             <div className="text-[10px] font-mono font-medium text-[#00696b] dark:text-[#8EC5FC]">{num}</div>
-            <div className="text-xs font-medium text-slate-900 dark:text-slate-100 leading-tight">{title}</div>
+            <div className="text-[10px] sm:text-xs font-medium text-slate-900 dark:text-slate-100 leading-tight">{title}</div>
             <div className="hidden sm:block text-[10px] text-[#5F5A52] dark:text-[#B8B2A7] mt-0.5">{sub}</div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-6 items-start max-md:gap-2.5">
         {/* ------------------------------------------------ form */}
-        <div className="lg:col-span-8 bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:px-4 sm:px-6">
-          <div className="pt-5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-[#00696b] dark:text-[#8EC5FC]">
+        <div className="lg:col-span-8 bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[16px] sm:rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[3px_3px_0_rgba(20,17,15,0.10),0_8px_20px_rgba(20,17,15,0.06)] sm:shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] px-3 dark:px-4 sm:px-6 max-md:bg-white max-md:dark:bg-[#111a2b] max-md:border-slate-200/70 max-md:dark:border-slate-700/60 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:rounded-xl max-md:p-3!">
+          <div className="pt-2 sm:pt-5 max-md:pt-1 max-md:pb-1">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#00696b] dark:text-[#8EC5FC] sm:gap-2 sm:px-3 sm:py-1 sm:tracking-[0.2em] max-md:border-0 max-md:bg-transparent max-md:px-0 max-md:py-0 max-md:rounded-none max-md:text-[11px]! max-md:font-semibold max-md:tracking-[0.06em] max-md:text-slate-500 max-md:dark:text-slate-400">
               Step 1 · Exam & Mode
             </div>
           </div>
-          <Row label="Number of questions" hint={`${EXAM_SCORING[selectedExam]} marking · ~${durationMin} min`}>
-            <div className="flex flex-wrap items-center gap-2">
+          <Row label="Number of questions" hint={`${EXAM_SCORING[selectedExam]} marking · ~${durationMin} min`} phoneFlat>
+            <div className="flex flex-wrap items-center gap-2 max-md:flex-nowrap max-md:shrink-0">
               <select
                 value={questionCount}
                 onChange={(e) => setQuestionCount(Number(e.target.value))}
-                className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-[#0f8b8d]"
+                className="min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-[#0f8b8d] sm:min-h-0 sm:px-3 sm:py-2 max-md:w-[88px] max-md:min-h-[36px] max-md:px-2 max-md:text-[13px]! max-md:font-semibold"
               >
                 {QUESTION_COUNTS.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
-              <span className="text-[11px] text-slate-500">
+              <span className="text-[11px] text-slate-500 max-md:hidden">
                 questions · written in batches of 10, up to 100
               </span>
             </div>
           </Row>
 
-          <div className="pt-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-[#00696b] dark:text-[#8EC5FC]">
+          <div className="pt-2 sm:pt-4 max-md:pt-1 max-md:pb-1">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#00696b] dark:text-[#8EC5FC] sm:gap-2 sm:px-3 sm:py-1 sm:tracking-[0.2em] max-md:border-0 max-md:bg-transparent max-md:px-0 max-md:py-0 max-md:rounded-none max-md:text-[11px]! max-md:font-semibold max-md:tracking-[0.06em] max-md:text-slate-500 max-md:dark:text-slate-400">
               Step 2 · Focus & Difficulty
             </div>
           </div>
           <Row label="Difficulty Level">
-            <div className="flex flex-wrap items-start gap-6">
+            <div className="flex flex-wrap items-start gap-2 sm:gap-6 max-md:items-center max-md:gap-x-3 max-md:gap-y-0">
               <Radio
                 checked={difficultyTier === 'ALL'}
                 onClick={() => { setDifficultyTier('ALL'); setDifficultySubLevel(undefined); }}
@@ -1347,8 +1372,8 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             </div>
 
             {difficultyTier !== 'ALL' && (
-              <div className="mt-3.5 space-y-2.5 pl-6">
-                <div className="flex flex-wrap gap-2">
+              <div className="mt-2 space-y-2 pl-0 sm:mt-3.5 sm:space-y-2.5 sm:pl-6">
+                <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
                   {([
                     { id: 'LOW', label: 'Low' },
                     { id: 'MEDIUM', label: 'Medium' },
@@ -1363,7 +1388,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                     </Chip>
                   ))}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
                   {(difficultyTier === 'LOW'
                     ? [{ id: 'L1', label: 'L1 · 1-step fact retrieval' }, { id: 'L2', label: 'L2 · pathognomonic cues' }]
                     : difficultyTier === 'MEDIUM'
@@ -1385,7 +1410,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </Row>
 
           <Row label="Questions from" hint="written by your active AI provider">
-            <div className="flex flex-wrap items-start gap-6">
+            <div className="flex flex-wrap items-start gap-2 sm:gap-6 max-md:items-center max-md:gap-x-3 max-md:gap-y-0">
               <Radio checked={sourceMode === 'AI'} onClick={() => setSourceMode('AI')} label="New AI questions" />
               <Radio
                 checked={sourceMode === 'MY_NOTES'}
@@ -1402,17 +1427,15 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
               <Chip active={false} onClick={() => onNavigate('mistakes')} title="Open the Mistake Notebook">My mistakes ↗</Chip>
-              <Chip active={false} onClick={() => onNavigate('question-bank')} title="Open the Question Bank">Recall bank ↗</Chip>
-              <Chip active={false} onClick={() => onNavigate('question-bank')} title="Open the Question Bank">eMedici ↗</Chip>
             </div>
             {sourceMode === 'MY_NOTES' && (
-              <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+              <p className="hidden sm:block text-[11px] text-slate-500 leading-relaxed mt-2">
                 Questions are written only from the highlights and AI notes you have saved. Nothing else is invented;
                 the note's citation is carried into the generated question.
               </p>
             )}
             {sourceMode === 'MY_BOOKS' && (
-              <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+              <p className="hidden sm:block text-[11px] text-slate-500 leading-relaxed mt-2">
                 Questions are written only from your own subject books. The internet is searched only for a point on which
                 the books themselves say their sources differ. If a topic is not in your books, no question is written for it.
               </p>
@@ -1420,7 +1443,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </Row>
 
           <Row label="Target topic" hint={customTopic ? 'overrides the speciality pick' : 'optional'}>
-            <div className={`rounded-2xl border p-3 transition-colors ${customTopic ? 'border-[#0f8b8d] bg-[#0f8b8d]/10 shadow-[3px_3px_0_rgba(79,172,254,0.22)]' : 'border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1]/70 dark:bg-[#0A1419]/70'}`}>
+            <div className={`rounded-xl sm:rounded-2xl border p-2.5 sm:p-3 transition-colors ${customTopic ? 'border-[#0f8b8d] bg-[#0f8b8d]/10 shadow-[2px_2px_0_rgba(79,172,254,0.18)] sm:shadow-[3px_3px_0_rgba(79,172,254,0.22)]' : 'border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1]/70 dark:bg-[#0A1419]/70'}`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-[11px] font-medium text-slate-900 dark:text-slate-100">
                   <Target className="w-3.5 h-3.5 text-[#00696b] dark:text-[#8EC5FC]" />
@@ -1436,20 +1459,20 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                   disabled={genState.busy}
                   maxLength={120}
                   placeholder='e.g. "lung carcinoma", "lung chapter", "diabetic ketoacidosis"'
-                  className="min-h-[44px] flex-1 rounded-xl bg-[#FFFDF6] dark:bg-[#0E171B] border border-[#D8D4CA] dark:border-[#213238] px-3 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder:text-[#8A8378] dark:placeholder:text-[#6F7A80] focus:outline-none focus:border-[#8EC5FC] focus:ring-2 focus:ring-[#8EC5FC]/25 disabled:opacity-50"
+                  className="min-h-[40px] flex-1 rounded-lg sm:rounded-xl bg-[#FFFDF6] dark:bg-[#0E171B] border border-[#D8D4CA] dark:border-[#213238] px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-[#8A8378] dark:placeholder:text-[#6F7A80] focus:outline-none focus:border-[#8EC5FC] focus:ring-2 focus:ring-[#8EC5FC]/25 disabled:opacity-50 sm:min-h-[44px] sm:px-3 sm:py-2"
                 />
                 {topicRequest && (
                   <button
                     type="button"
                     onClick={() => { setTopicRequest(''); setGenState((st) => ({ ...st, error: null })); }}
                     disabled={genState.busy}
-                    className="min-h-[44px] rounded-xl border border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1] dark:bg-[#0A1419] px-3 text-[11px] font-medium text-[#4B4640] dark:text-[#C9C3B8] hover:border-[#8EC5FC] disabled:opacity-40"
+                    className="min-h-[40px] rounded-lg sm:rounded-xl border border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1] dark:bg-[#0A1419] px-2.5 text-[11px] font-medium text-[#4B4640] dark:text-[#C9C3B8] hover:border-[#8EC5FC] disabled:opacity-40 sm:min-h-[44px] sm:px-3"
                   >
                     Clear
                   </button>
                 )}
               </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-[#5F5A52] dark:text-[#B8B2A7]">
+              <p className="hidden sm:block mt-2 text-[10px] leading-relaxed text-[#5F5A52] dark:text-[#B8B2A7]">
                 Type any topic, chapter or condition and get MCQs on it without choosing a speciality. Clear the box to go back to speciality choices.
               </p>
             </div>
@@ -1457,7 +1480,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
 
           <div id="speciality-picker" className={customTopic ? 'opacity-60 saturate-50 transition-opacity' : 'transition-opacity'}>
           <Row label="Speciality" hint={`${subjectsChosen} of ${subjectList.length} selected`}>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mb-3">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 sm:gap-x-6 sm:gap-y-3 sm:mb-3">
               <Radio
                 checked={specialtyAll}
                 onClick={() => setSpecialtyAll(true)}
@@ -1483,7 +1506,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
               )}
             </div>
 
-            <div className="rounded-xl border border-slate-200 max-h-[320px] overflow-y-auto">
+            <div className="rounded-lg sm:rounded-xl border border-slate-200 max-h-[224px] sm:max-h-[320px] overflow-y-auto max-md:rounded-xl max-md:border-slate-200/70 max-md:dark:border-slate-700/60">
               {subjectList.map((row) => {
                 const on = isSubjectOn(row.key);
                 const chosenTopics = chosenTopicsFor(row);
@@ -1492,11 +1515,11 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                   <div
                     key={row.key}
                     title={row.desc || row.label}
-                    className={`flex items-start gap-2.5 px-3 py-2.5 border-b border-slate-100 last:border-b-0 transition-colors ${
+                    className={`flex min-h-[44px] items-center gap-2 px-2 py-1.5 max-md:min-h-[48px] max-md:px-3 max-md:border-slate-200/70 max-md:dark:border-slate-700/60 sm:min-h-0 sm:items-start sm:gap-2.5 sm:px-3 sm:py-2.5 border-b border-slate-100 last:border-b-0 transition-colors ${
                       on ? 'bg-teal-50/40' : 'hover:bg-slate-50'
                     }`}
                   >
-                    <button onClick={() => toggleSubject(row.key)} className="flex items-start gap-2.5 flex-1 min-w-0 text-left">
+                    <button onClick={() => toggleSubject(row.key)} className="flex items-center gap-2 flex-1 min-w-0 text-left sm:items-start sm:gap-2.5">
                       <span className="mt-0.5"><SubjectTick checked={on} /></span>
                       <span className="min-w-0">
                         <span className="block text-xs font-semibold text-slate-800 truncate">
@@ -1514,7 +1537,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                     </button>
                     <button
                       onClick={() => setTopicModal({ key: row.key, label: row.label })}
-                      className="shrink-0 mt-0.5 px-2 py-1 rounded-md text-[10px] font-medium text-[#0f8b8d] hover:bg-teal-50 flex items-center gap-1"
+                      className="shrink-0 mt-0.5 px-2 py-1 rounded-md text-[10px] font-medium text-[#0f8b8d] hover:bg-teal-50 flex items-center gap-1 max-md:h-7 max-md:rounded-full max-md:border max-md:border-slate-200 max-md:px-2.5 max-md:text-[11px]! max-md:text-[#0f8b8d] max-md:dark:border-slate-700 max-md:dark:text-teal-300"
                       title="Choose topics"
                     >
                       Topics <ChevronsUpDown className="w-3 h-3" />
@@ -1526,8 +1549,8 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </Row>
           </div>
 
-          <div className="pt-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-[#00696b] dark:text-[#8EC5FC]">
+          <div className="pt-2 sm:pt-4 max-md:pt-1 max-md:pb-1">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#8EC5FC]/70 bg-[#0f8b8d]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#00696b] dark:text-[#8EC5FC] sm:gap-2 sm:px-3 sm:py-1 sm:tracking-[0.2em] max-md:border-0 max-md:bg-transparent max-md:px-0 max-md:py-0 max-md:rounded-none max-md:text-[11px]! max-md:font-semibold max-md:tracking-[0.06em] max-md:text-slate-500 max-md:dark:text-slate-400">
               Step 3 · Style & Launch
             </div>
           </div>
@@ -1535,7 +1558,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             <div className="space-y-3">
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500 mb-1.5">Question style</div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-1.5 max-md:flex max-md:flex-wrap max-md:gap-1.5">
                   {QUESTION_TYPE_CHIPS.map((q) => (
                     <Chip key={q} active={questionTypes.includes(q)} onClick={() => toggleFromList(questionTypes, setQuestionTypes, q)}>
                       {q}
@@ -1545,7 +1568,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
               </div>
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500 mb-1.5">Stem focus</div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-1.5 max-md:flex max-md:flex-wrap max-md:gap-1.5">
                   {STEM_PATTERN_CHIPS.map((p) => (
                     <Chip key={p} active={stemPatterns.includes(p)} onClick={() => toggleFromList(stemPatterns, setStemPatterns, p)}>
                       {p}
@@ -1554,9 +1577,9 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                 </div>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="text-[11px] font-medium text-slate-800">Question image mode</div>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 sm:space-y-2 max-md:p-3 max-md:rounded-xl max-md:border-slate-200/70 max-md:dark:border-slate-700/60 max-md:dark:bg-slate-900/40">
+                <div className="text-[11px] font-medium text-slate-800 max-md:text-[13px]! max-md:text-slate-900 max-md:dark:text-slate-100">Question image mode</div>
+                <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap">
                   {([
                     ['text', 'Text only'],
                     ['mixed', 'Include images'],
@@ -1567,13 +1590,13 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                       type="button"
                       onClick={() => setImageMode(value)}
                       aria-pressed={imageMode === value}
-                      className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-semibold transition-colors ${imageMode === value ? 'bg-[#0f8b8d] border-[#0f8b8d] text-white' : 'bg-white border-slate-200 text-slate-600 '}`}
+                      className={`min-h-[40px] px-2 py-1 rounded-lg border text-[10px] font-semibold transition-colors sm:min-h-0 sm:px-2.5 sm:py-1.5 ${imageMode === value ? 'bg-[#0f8b8d] border-[#0f8b8d] text-white' : 'bg-white border-slate-200 text-slate-600 '}`}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-slate-500 leading-snug">
+                <p className="hidden sm:block text-[10px] text-slate-500 leading-snug">
                   {imageMode === 'only'
                     ? customTopic
                       ? 'Every question must use a curated image matching this topic and pass vision verification. Requires the active model (Gemini) to write and check each image; unmatched or unverifiable images are not replaced with text questions.'
@@ -1589,7 +1612,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </Row>
 
           <Row label="Mode" last>
-            <div className="flex flex-wrap items-start gap-6">
+            <div className="flex flex-wrap items-start gap-2 sm:gap-6 max-md:items-center max-md:gap-x-3 max-md:gap-y-0">
               <Radio
                 checked={mode === 'TUTOR'}
                 onClick={() => setMode('TUTOR')}
@@ -1606,16 +1629,16 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </Row>
         </div>
         {/* ------------------------------------------------ right rail */}
-        <div className="lg:col-span-4 space-y-5">
-          <div className="lg:sticky lg:top-4 bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-3">
+        <div className="lg:col-span-4 space-y-3 sm:space-y-5 max-md:space-y-2.5">
+          <div className="lg:sticky lg:top-4 bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[16px] sm:rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[3px_3px_0_rgba(20,17,15,0.10),0_8px_20px_rgba(20,17,15,0.06)] sm:shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-2 sm:space-y-3 max-md:bg-white max-md:dark:bg-[#111a2b] max-md:border-slate-200/70 max-md:dark:border-slate-700/60 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:rounded-xl max-md:p-3!">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">Launch summary</h3>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#0f8b8d] text-slate-900 font-medium">{EXAM_LABEL[selectedExam]}</span>
+              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100 max-md:text-[15px]! max-md:font-semibold">Launch summary</h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#0f8b8d] text-slate-900 font-medium max-md:font-sans">{EXAM_LABEL[selectedExam]}</span>
             </div>
-            <p className="text-[11px] text-[#5F5A52] dark:text-[#B8B2A7] leading-relaxed">
+            <p className="text-[11px] text-[#5F5A52] dark:text-[#B8B2A7] leading-relaxed max-md:hidden">
               {EXAM_LABEL[selectedExam]} pattern · {EXAM_SCORING[selectedExam]} · {mode === 'EXAM' ? 'strict exam timing' : 'regular practice'}
             </p>
-            <div className="rounded-xl bg-[#FFF8E1]/80 dark:bg-[#0A1419]/80 border border-[#D8D4CA] dark:border-[#213238] divide-y divide-[#E4E0D6] dark:divide-[#203138] text-[11px] overflow-hidden">
+            <div className="rounded-xl bg-[#FFF8E1]/80 dark:bg-[#0A1419]/80 border border-[#D8D4CA] dark:border-[#213238] divide-y divide-[#E4E0D6] dark:divide-[#203138] text-[11px] overflow-hidden max-md:hidden max-md:bg-slate-50 max-md:dark:bg-slate-900/40 max-md:border-slate-200 max-md:dark:border-slate-700/60 max-md:divide-slate-200 max-md:dark:divide-slate-700/60 max-md:text-[13px]! max-md:rounded-lg">
               {[
                 ['Questions', `${questionCount}`],
                 ['Mode', mode === 'EXAM' ? 'EXAM' : 'TUTOR'],
@@ -1625,9 +1648,9 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                 ['Topics', `${totalChosenSubtopicsCount}`],
                 ['Est. duration', `~${durationMin} min`],
               ].map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-3 px-3 py-2">
+                <div key={label} className="flex justify-between gap-2 px-2 py-1.5 sm:gap-3 sm:px-3 sm:py-2">
                   <span className="text-[#5F5A52] dark:text-[#B8B2A7]">{label}</span>
-                  <span className="font-medium text-slate-900 dark:text-slate-100 font-mono text-right">{value}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100 font-mono text-right max-md:font-sans max-md:tabular-nums">{value}</span>
                 </div>
               ))}
             </div>
@@ -1673,19 +1696,31 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </div>
 
           {/* AI instruction profiles — saved, reusable, and generated on demand */}
-          <div className="bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                <MessageSquarePlus className="w-4 h-4 text-[#00696b] dark:text-[#8EC5FC]" /> Instruction Scroll
+          <div className="bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[16px] sm:rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[3px_3px_0_rgba(20,17,15,0.10),0_8px_20px_rgba(20,17,15,0.06)] sm:shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-2 sm:space-y-2.5 max-md:bg-transparent max-md:dark:bg-transparent max-md:border-0 max-md:shadow-none max-md:rounded-none max-md:p-0!">
+            <div className="flex items-center justify-between gap-2 max-md:hidden">
+              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1.5 max-md:text-[15px]! max-md:font-semibold">
+                <MessageSquarePlus className="w-4 h-4 text-[#00696b] dark:text-[#8EC5FC] max-md:h-4 max-md:w-4 max-md:text-[#0f8b8d] max-md:dark:text-teal-300" /> Instruction Scroll
               </h3>
               <span className="text-[9px] font-mono text-slate-400">
                 {profiles.length} saved profile{profiles.length === 1 ? '' : 's'}
               </span>
             </div>
-            <p className="text-[10px] leading-relaxed text-slate-500">
+            <p className="hidden sm:block text-[10px] leading-relaxed text-slate-500 max-md:hidden">
               Tell the AI how to write <span className="italic">this</span> set — style, difficulty, stem length,
               distractors, focus. Save it as a named profile and reuse it on any future run.
             </p>
+            <button
+              type="button"
+              onClick={() => setPhoneInstrOpen((v) => !v)}
+              className="md:hidden flex w-full min-h-[44px] items-center justify-between gap-2 rounded-xl border border-slate-200/70 dark:border-slate-700/60 bg-white dark:bg-[#111a2b] px-3 shadow-[0_1px_2px_rgba(15,23,42,0.05)] text-[14px] font-semibold text-slate-900 dark:text-slate-100"
+            >
+              <span className="flex items-center gap-2">
+                <MessageSquarePlus className="h-4 w-4 text-[#0f8b8d] dark:text-teal-300" />
+                Custom instructions
+              </span>
+              <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${phoneInstrOpen ? 'rotate-180' : ''}`} />
+            </button>
+            <div className={phoneInstrOpen ? 'max-md:space-y-2 md:space-y-2.5' : 'max-md:hidden md:space-y-2.5'}>
 
             {profiles.length > 0 && (
               <div className="flex items-center gap-1.5">
@@ -1794,13 +1829,14 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             {appliedProfile && appliedProfile === profileDraft.trim() && (
               <p className="text-[10px] text-[#0f8b8d]">Active for the next generation{activeProfileId ? ' · saved profile' : ''}.</p>
             )}
+            </div>
           </div>
 
           {/* Generator + launch */}
-          <div className="bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-3">
+          <div className="bg-[#FFFDF6]/95 dark:bg-[#0E171B]/95 rounded-[16px] sm:rounded-[20px] border border-[#D8D4CA] dark:border-[#213238] shadow-[3px_3px_0_rgba(20,17,15,0.10),0_8px_20px_rgba(20,17,15,0.06)] sm:shadow-[6px_6px_0_rgba(20,17,15,0.15),0_16px_40px_rgba(20,17,15,0.08)] dark:shadow-[6px_6px_0_rgba(0,204,255,0.10),0_16px_40px_rgba(0,0,0,0.45)] dark:p-5 space-y-2 sm:space-y-3 max-md:bg-white max-md:dark:bg-[#111a2b] max-md:border-slate-200/70 max-md:dark:border-slate-700/60 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:rounded-xl max-md:p-3!">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-[#00696b] dark:text-[#8EC5FC]" /> {imageMode === 'only' ? 'Image-only launch' : 'Launch console'}
+              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1.5 max-md:text-[15px]! max-md:font-semibold">
+                <Sparkles className="w-4 h-4 text-[#00696b] dark:text-[#8EC5FC] max-md:h-4 max-md:w-4 max-md:text-[#0f8b8d] max-md:dark:text-teal-300" /> {imageMode === 'only' ? 'Image-only launch' : 'Launch console'}
               </h3>
               <span className="text-[10px] font-mono text-[#5F5A52] dark:text-[#B8B2A7] truncate max-w-[55%]">
                 {imageMode === 'only'
@@ -1821,8 +1857,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
               <div className="rounded-2xl border border-[#B45309] bg-[#FFF3C4] px-3 py-2.5 text-[11px] leading-relaxed text-[#4A2A00] flex items-start gap-2 shadow-[4px_4px_0_rgba(180,83,9,0.18)] [clip-path:polygon(0_6%,100%_0,98%_94%,2%_100%)] dark:bg-[#2A2108] dark:text-[#FFE7A3] dark:border-[#F59E0B]">
                 <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-[#B45309] dark:text-[#FBBF24]" />
                 <span>
-                  No AI engine is connected, so questions cannot be written. Connect Claude, ChatGPT, Grok, Gemini or
-                  OpenCode in Settings — the questions come from your own subscription.
+                  No AI engine is connected, so questions cannot be written. Connect Claude, ChatGPT, Grok or Gemini in Settings — the questions come from your own subscription.
                   <button
                     onClick={() => onNavigate('settings')}
                     className="ml-1 font-medium underline decoration-dotted hover:text-[#2A1800] dark:hover:text-[#FFF8E1]"
@@ -1926,25 +1961,11 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
               </div>
             )}
 
-            <div className="sticky bottom-0 z-20 -mx-5 mt-2 border-t border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1]/95 dark:bg-[#070d18]/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+            <div className="sticky bottom-[calc(64px_+_env(safe-area-inset-bottom))] z-20 -mx-3 mt-2 border-t border-[#D8D4CA] dark:border-[#213238] bg-[#FFF8E1]/95 dark:bg-[#070d18]/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur max-md:hidden md:bottom-0 md:-mx-5 md:px-5 md:pb-[max(1rem,env(safe-area-inset-bottom))] md:pt-3 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
               <button
-                onClick={() => {
-                  if (imageMode !== 'only' && (!activeProvider || providerKnownDown)) {
-                    onNavigate('settings');
-                    return;
-                  }
-                  if (!canLaunch) {
-                    setGenState({
-                      busy: false, generated: 0, total: 0, batch: 0, totalBatches: 0, dropped: 0,
-                      error: 'Pick at least one speciality (or choose All) before building a module.',
-                    });
-                    document.getElementById('speciality-picker')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    return;
-                  }
-                  handleLaunch();
-                }}
+                onClick={handleLaunchClick}
                 disabled={genState.busy}
-                className="min-h-[44px] w-full rounded-2xl bg-[#0f8b8d] px-4 py-3 text-sm font-medium text-slate-900 shadow-[4px_4px_0_rgba(3,4,9,0.22)] transition-all hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-[#8EC5FC] focus:ring-offset-2 focus:ring-offset-[#FFF8E1] dark:focus:ring-offset-[#030409] disabled:cursor-not-allowed disabled:opacity-40 flex items-center justify-center gap-2"
+                className="min-h-[44px] w-full rounded-xl sm:rounded-2xl bg-[#0f8b8d] px-4 py-2.5 sm:py-3 text-sm font-medium text-slate-900 shadow-[3px_3px_0_rgba(3,4,9,0.18)] sm:shadow-[4px_4px_0_rgba(3,4,9,0.22)] transition-all hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-[#8EC5FC] focus:ring-offset-2 focus:ring-offset-[#FFF8E1] dark:focus:ring-offset-[#030409] disabled:cursor-not-allowed disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {genState.busy ? (
                   <>
@@ -2043,7 +2064,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             )}
           </div>
 
-          <div className="space-y-1.5 px-1">
+          <div className="space-y-1.5 px-1 max-md:hidden">
             <div className="flex items-start gap-2 text-[10px] text-slate-500">
               <Brain className="w-3.5 h-3.5 shrink-0" />
               <span>Questions come from your active AI subscription — nothing is canned.</span>
@@ -2062,6 +2083,26 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           </div>
         </div>
       </div>
+
+      <div className="md:hidden fixed inset-x-0 z-20 bottom-[calc(64px+env(safe-area-inset-bottom))] h-[52px] bg-white dark:bg-[#111a2b] border-t border-slate-200 dark:border-slate-700/60 px-3 py-1 flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-slate-900 dark:text-slate-100 truncate">
+            {questionCount} Qs · {EXAM_LABEL[selectedExam]}
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+            {subjectsChosen > 0 ? `${subjectsChosen} specialities · ${totalChosenSubtopicsCount} topics` : customTopic ? `Topic: ${customTopic}` : 'Pick a focus'}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleLaunchClick}
+          disabled={genState.busy}
+          className="min-h-[40px] shrink-0 rounded-lg bg-[#0f8b8d] px-4 text-[13px] font-semibold text-white disabled:opacity-40"
+        >
+          {genState.busy ? 'Generating…' : imageMode !== 'only' && !activeProvider ? 'Connect AI' : imageMode !== 'only' && providerKnownDown ? 'Reconnect' : !canLaunch ? 'Select focus' : 'Launch'}
+        </button>
+      </div>
+      <div className="md:hidden h-[calc(52px+64px+env(safe-area-inset-bottom))]" />
 
       {topicModal && activeModalRow && (
         <TopicPickerModal

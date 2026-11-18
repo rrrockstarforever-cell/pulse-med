@@ -140,14 +140,20 @@ export function profileSet(items: BenchItem[]): SetProfile {
 const contentWords = (s: string) =>
   new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOPWORDS.has(w)));
 
-/** Jaccard overlap of content words, 0 to 1. */
-export function stemSimilarity(a: string, b: string): number {
-  const A = contentWords(a);
-  const B = contentWords(b);
+/** The content words of a stem, computed once so many comparisons do not re-read the text. */
+export const contentWordSet = contentWords;
+
+/** Jaccard overlap of two content-word sets, 0 to 1. */
+export function wordSetSimilarity(A: Set<string>, B: Set<string>): number {
   if (A.size === 0 || B.size === 0) return 0;
   let shared = 0;
   for (const w of A) if (B.has(w)) shared++;
   return shared / (A.size + B.size - shared);
+}
+
+/** Jaccard overlap of content words, 0 to 1. */
+export function stemSimilarity(a: string, b: string): number {
+  return wordSetSimilarity(contentWords(a), contentWords(b));
 }
 
 function nearestReference(item: BenchItem, refs: BenchItem[]): { similarity: number; ref: BenchItem | null } {

@@ -91,7 +91,7 @@ function readRawBankFile() {
   }
 }
 
-/** Read the bank for USE (queries, stats, tutor): only entries with a reusable CC0 or public-domain licence. Never throws. */
+/** Read the bank for USE (queries, stats, tutor): only entries with a reusable licence (CC0, public domain, CC BY or CC BY-SA). Never throws. */
 function readBankFile() {
   const raw = readRawBankFile();
   const entries = raw.entries.flatMap((entry) => {

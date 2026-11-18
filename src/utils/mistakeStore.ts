@@ -22,6 +22,14 @@ export interface CapturedQuestion {
   explanation?: string;
   /** captured topic label shown in the notebook */
   topic?: string;
+  /** 'test' = added automatically from a submitted test (wrong or skipped answer). */
+  origin?: 'test' | 'capture';
+  /** How many times this question has been missed in tests, and when last. */
+  timesMissed?: number;
+  lastMissedAt?: string;
+  lastAttemptId?: string;
+  reason?: 'wrong' | 'skipped';
+  yourAnswer?: string;
   question: ClinicalQuestion;
 }
 
@@ -88,12 +96,72 @@ export function importCapturedQuestions(records: CapturedQuestion[]): number {
   return added;
 }
 
+/**
+ * Puts every wrong or skipped question of a submitted test into the notebook (once per attempt). A question missed again
+ * counts up; a question answered correctly later is marked remediated.
+ */
+export function recordTestMisses(
+  questions: ClinicalQuestion[],
+  answers: Record<string, string>,
+  source: string,
+  attemptId: string,
+): { added: number; updated: number; remediated: number } {
+  const items = readAll();
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const now = new Date().toISOString();
+  let added = 0;
+  let updated = 0;
+  let remediated = 0;
+  for (const q of questions) {
+    const id = `TEST-${q.id}`;
+    const chosen = answers[q.id];
+    const hit = byId.get(id);
+    if (hit && hit.lastAttemptId === attemptId) continue;
+    if (chosen && chosen === q.correctOption) {
+      if (hit && hit.status === 'unresolved') { hit.status = 'remediated'; hit.markedCorrect = true; hit.lastAttemptId = attemptId; remediated += 1; }
+      continue;
+    }
+    const reason: 'wrong' | 'skipped' = chosen ? 'wrong' : 'skipped';
+    if (hit) {
+      hit.status = 'unresolved';
+      hit.markedCorrect = false;
+      hit.timesMissed = (hit.timesMissed ?? 1) + 1;
+      hit.lastMissedAt = now;
+      hit.lastAttemptId = attemptId;
+      hit.reason = reason;
+      hit.yourAnswer = chosen;
+      updated += 1;
+    } else {
+      const item: CapturedQuestion = {
+        id,
+        createdAt: now,
+        source,
+        status: 'unresolved',
+        markedCorrect: false,
+        topic: (q.subtopic || q.subject || '').trim(),
+        origin: 'test',
+        timesMissed: 1,
+        lastMissedAt: now,
+        lastAttemptId: attemptId,
+        reason,
+        yourAnswer: chosen,
+        question: { ...q, timesFailed: 1 },
+      };
+      items.unshift(item);
+      byId.set(id, item);
+      added += 1;
+    }
+  }
+  if (added || updated || remediated) writeAll(items);
+  return { added, updated, remediated };
+}
+
 /** The notebook renders ordinary ClinicalQuestions; marking maps onto isRemediated. */
 export function capturedToClinicalQuestion(c: CapturedQuestion): ClinicalQuestion {
   return {
     ...c.question,
     id: c.id,
     isRemediated: c.status === 'remediated',
-    timesFailed: c.status === 'remediated' ? 1 : Math.max(1, c.question.timesFailed ?? 1),
+    timesFailed: c.status === 'remediated' ? 1 : Math.max(1, c.timesMissed ?? c.question.timesFailed ?? 1),
   };
 }

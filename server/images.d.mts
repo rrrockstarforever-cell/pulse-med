@@ -27,8 +27,8 @@ export interface ReferenceSource {
   note: string;
 }
 
-export declare function reusableLicense(label: string, url?: string): { label: 'CC0' | 'Public domain'; url: string } | null;
-export declare function buildVisionVerificationPrompt(input: { claim: string; modality?: string; bodyPart?: string; questionStem?: string; questionText?: string; correctAnswer?: string; explanation?: string; boardPearl?: string }): string;
+export declare function reusableLicense(label: string, url?: string): { label: 'CC0' | 'Public domain' | 'CC BY' | 'CC BY-SA'; url: string } | null;
+export declare function buildVisionVerificationPrompt(input: { claim: string; modality?: string; bodyPart?: string; questionStem?: string; questionText?: string; correctAnswer?: string; explanation?: string; boardPearl?: string; attached?: boolean }): string;
 export declare function parseVisionVerdict(raw: string): { pass: boolean; shows: string; unsupportedQuestionClaims: string[]; reason: string } | null;
 export declare function relevanceOf(item: Partial<LiveImageResult>, query: string): number;
 export declare function reusableSearchResult(item: Partial<LiveImageResult>, query: string): boolean;

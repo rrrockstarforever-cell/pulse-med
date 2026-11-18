@@ -20,7 +20,11 @@ expect('Public Domain label accepted', reusableLicense('Public domain')?.label, 
 expect('PD label accepted', reusableLicense('PD-US-expired')?.label, 'Public domain');
 expect('CC0 label accepted', reusableLicense('CC0 1.0 Universal')?.label, 'CC0');
 expect('Open-i CC0 URL accepted', reusableLicense('', 'https://creativecommons.org/publicdomain/zero/1.0/')?.label, 'CC0');
-for (const label of ['CC BY 4.0', 'CC BY-SA 4.0', 'CC BY-NC 4.0', 'CC BY-ND 4.0', 'by', 'bysa', 'unknown']) {
+expect('CC BY accepted with credit', reusableLicense('CC BY 4.0')?.label, 'CC BY');
+expect('CC BY-SA accepted with credit', reusableLicense('CC BY-SA 3.0')?.label, 'CC BY-SA');
+expect('CC BY URL accepted', reusableLicense('', 'https://creativecommons.org/licenses/by/4.0/')?.label, 'CC BY');
+expect('CC BY-SA URL accepted', reusableLicense('', 'https://creativecommons.org/licenses/by-sa/4.0/')?.label, 'CC BY-SA');
+for (const label of ['CC BY-NC 4.0', 'CC BY-ND 4.0', 'CC BY-NC-SA 4.0', 'CC BY-NC-ND 4.0', 'by', 'bysa', 'unknown']) {
   expect(`reject ${label}`, reusableLicense(label), null);
 }
 expect('contradictory CC BY URL rejected', reusableLicense('CC0', 'https://creativecommons.org/licenses/by/4.0/'), null);
@@ -29,7 +33,8 @@ expect('unknown label cannot borrow CC0 URL rights', reusableLicense('unknown', 
 expect('exact diagnostic token matches', relevanceOf({ title: 'Lobar pneumonia chest radiograph', caption: '' }, 'pneumonia chest x-ray') >= 0.6, true);
 expect('substring collision does not match a different diagnosis', relevanceOf({ title: 'Pneumothorax X-ray', caption: '' }, 'pneumonia'), 0);
 expect('weak modality-only live result rejected', reusableSearchResult({ title: 'Generic chest X-ray', caption: '', licence: 'Public domain' }, 'lobar pneumonia'), false);
-expect('unlicensed search result rejected', reusableSearchResult({ title: 'Lobar pneumonia X-ray', caption: '', licence: 'CC BY 4.0' }, 'lobar pneumonia'), false);
+expect('non-commercial search result rejected', reusableSearchResult({ title: 'Lobar pneumonia X-ray', caption: '', licence: 'CC BY-NC 4.0' }, 'lobar pneumonia'), false);
+expect('CC BY search result accepted', reusableSearchResult({ title: 'Lobar pneumonia X-ray', caption: '', licence: 'CC BY 4.0' }, 'lobar pneumonia'), true);
 expect('relevant Public Domain search result accepted', reusableSearchResult({ title: 'Lobar pneumonia X-ray', caption: '', licence: 'Public domain' }, 'lobar pneumonia'), true);
 
 expect('complete valid vision verdict passes', parseVisionVerdict('{"shows":"lobar pneumonia on chest X-ray","unsupported_question_claims":[],"pass":true,"reason":"Finding is visible."}')?.pass, true);
@@ -56,7 +61,8 @@ expect('generic bank verification retains label-only behavior', genericPrompt.in
 
 expect('legacy generated QBank image without license is hidden', stripUnlicensedImageFields({ image: '/old.jpg', imageLicence: undefined, imageCaption: 'Old source' }).image, undefined);
 expect('QBank keeps a CC0 image with provenance', stripUnlicensedImageFields({ image: '/cc0.jpg', imageLicence: 'CC0', imageLicenceUrl: 'https://creativecommons.org/publicdomain/zero/1.0/' }).image, '/cc0.jpg');
-expect('QBank strips a non-free image', stripUnlicensedImageFields({ image: '/by.jpg', imageLicence: 'CC BY 4.0' }).image, undefined);
+expect('QBank strips a non-commercial image', stripUnlicensedImageFields({ image: '/nc.jpg', imageLicence: 'CC BY-NC 4.0' }).image, undefined);
+expect('QBank keeps a CC BY image', stripUnlicensedImageFields({ image: '/by.jpg', imageLicence: 'CC BY 4.0' }).image, '/by.jpg');
 expect('shared browser/server license gate agrees', normalizeReusableImageLicense('Public domain')?.label, reusableLicense('Public domain')?.label);
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'pulse-image-license-'));
@@ -68,7 +74,7 @@ try {
   writeFileSync(join(bankDir, 'bank.json'), JSON.stringify({ entries: [
     { image_id: 'pd-pneumonia', licence: 'Public domain', ground_truth: 'lobar pneumonia', subject: 'Radiology', modality: 'X-ray', body_part: 'chest' },
     { image_id: 'cc0-pneumothorax', licence: 'CC0', ground_truth: 'pneumothorax', subject: 'Radiology', modality: 'X-ray', body_part: 'chest' },
-    { image_id: 'by-cancer', licence: 'CC BY 4.0', ground_truth: 'pneumonia', subject: 'Radiology', modality: 'X-ray', body_part: 'chest' },
+    { image_id: 'by-cancer', licence: 'CC BY-NC 4.0', ground_truth: 'pneumonia', subject: 'Radiology', modality: 'X-ray', body_part: 'chest' },
     { image_id: 'missing-license', ground_truth: 'pneumonia', subject: 'Radiology', modality: 'X-ray', body_part: 'chest' },
   ] }));
   const bank = await import(`../../server/imageBank.mjs?license-test=${Date.now()}`);

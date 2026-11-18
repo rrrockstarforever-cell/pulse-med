@@ -24,8 +24,9 @@ const mkStorage = (m) => ({
 });
 globalThis.localStorage = mkStorage(store);
 globalThis.sessionStorage = mkStorage(new Map());
-store.set('ai.activeProvider', arg('provider', 'opencode'));
-store.set('ai.model.opencode', 'deepseek-v4.1-flash');
+store.set('ai.activeProvider', arg('provider', 'deeprelay'));
+store.set('ai.model.deeprelay', 'deeprelay/deepseek-v4.1-flash');
+if (arg('model', '')) store.set('ai.model.' + arg('provider', 'deeprelay'), arg('model', ''));
 const realFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = (input, init) => {
   if (typeof input === 'string' && input.startsWith('/')) input = BASE + input;
@@ -51,9 +52,13 @@ const run = await t.runMatrix(cases, {
   maxCount: MAX,
   onDone: (r) => {
     savePlans();
+    // Save each case the moment it finishes, so its pictures can be checked while the other cases are still running.
+    try { fs.writeFileSync(OUT.replace(/\.json$/, '') + `.case-${r.id}.json`, JSON.stringify(r, null, 1)); } catch { /* optional */ }
     console.log(r.error ? `${r.id}: ERROR ${r.error}` : `${r.id}: kept ${r.kept}/${r.target} wrong ${r.wrong} amb ${r.ambiguous} low ${r.lowRelevance} style ${r.styleBad ?? '-'} ${r.seconds}s`);
   },
 });
 fs.writeFileSync(OUT, JSON.stringify(run, null, 1));
+// Time taken by each step of generation (the app keeps it in window.__stageLog), for finding what is slow.
+try { fs.writeFileSync(OUT.replace(/\.json$/, '') + '.stages.json', JSON.stringify(globalThis.__stageLog ?? [])); } catch { /* optional */ }
 console.log(`done in ${Math.round((Date.now() - started) / 1000)}s -> ${OUT}\n` + t.summarize(run));
 process.exit(0);

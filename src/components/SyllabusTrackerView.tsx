@@ -192,17 +192,18 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
   );
 
   const toggleExpanded = useCallback((subject: string) => {
-    setExpanded((prev) => ({ ...prev, [subject]: !prev[subject] }));
-  }, []);
+    const isDefaultOpen = visibleSubjects[0]?.progress.subject === subject;
+    setExpanded((prev) => ({ ...prev, [subject]: !(prev[subject] ?? isDefaultOpen) }));
+  }, [visibleSubjects]);
 
   const examLabel = exam === 'NEET_PG' ? 'NEET PG' : 'INI-CET';
   const ringPercent = Math.max(0, Math.min(100, overall.percent));
   const ringDash = (ringPercent / 100) * RING_CIRCUMFERENCE;
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
-      <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6 max-md:space-y-2 max-md:p-2">
+      <section className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6 max-md:rounded-xl max-md:p-2.5">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center max-md:flex-row max-md:items-center max-md:gap-2">
           <div className="flex shrink-0 justify-center">
             <svg
               width="132"
@@ -210,7 +211,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
               viewBox="0 0 120 120"
               role="img"
               aria-label={`Overall syllabus coverage ${Math.round(overall.percent)} percent`}
-              className="text-slate-800 dark:text-slate-100"
+              className="h-[68px] w-[68px] shrink-0 text-slate-800 dark:text-slate-100 sm:h-[132px] sm:w-[132px]"
               style={{ filter: 'drop-shadow(3px 3px 0 rgba(15,139,141,0.25))' }}
             >
               <circle
@@ -257,7 +258,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                 x="60"
                 y="76"
                 textAnchor="middle"
-                fontSize="10"
+                fontSize="11"
                 fontWeight="700"
                 fill="currentColor"
                 opacity="0.7"
@@ -268,19 +269,19 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 max-md:gap-1">
               <span className="rounded-md border border-[#0f8b8d]/30 bg-[#0f8b8d]/10 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-[#0f8b8d]">
                 {examLabel}
               </span>
-              <h2 className="text-xl font-medium tracking-tight text-slate-800 sm:text-2xl">
+              <h2 className="text-xl font-medium tracking-tight text-slate-800 sm:text-2xl max-md:text-base">
                 Syllabus coverage
               </h2>
             </div>
-            <p className="mt-1 text-sm font-semibold text-slate-600">
+            <p className="mt-1 text-sm font-semibold text-slate-600 max-md:hidden">
               Tick off topics as you finish them. Everything is stored on this device and is included
               in your sync backup.
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2 max-md:mt-1.5 max-md:gap-1">
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
                 <Target size={14} />
                 {overall.done} / {overall.total} topics
@@ -295,7 +296,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                 </span>
               )}
             </div>
-            <div className="mt-4">
+            <div className="mt-4 max-md:mt-1.5">
               <label htmlFor="syllabus-search" className="sr-only">
                 Search subjects and topics
               </label>
@@ -311,7 +312,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search subjects and topics…"
                   autoComplete="off"
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm font-semibold text-slate-800 shadow-sm placeholder:text-slate-400 placeholder:opacity-50 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/40"
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm font-semibold text-slate-800 shadow-sm placeholder:text-slate-400 placeholder:opacity-50 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/40 max-md:py-1.5 max-md:text-xs"
                 />
               </div>
             </div>
@@ -337,31 +338,31 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
           ) : null}
         </div>
       ) : (
-        <div className="grid gap-4">
-          {visibleSubjects.map(({ progress: entry, topics }) => {
+        <div className="grid gap-4 max-md:gap-1.5">
+          {visibleSubjects.map(({ progress: entry, topics }, subjectIndex) => {
             const subject = entry.subject;
             const subjectDone = doneSets[subject];
             const completion = entry.total > 0 ? (entry.done / entry.total) * 100 : 0;
-            const isOpen = normalizedQuery.length > 0 || expanded[subject] === true;
+            const isOpen = normalizedQuery.length > 0 || (expanded[subject] ?? subjectIndex === 0);
             const panelId = `syllabus-panel-${slugify(subject)}`;
             const highYield = highYieldBySubject.get(subject) ?? [];
 
             return (
               <article
                 key={subject}
-                className="overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"
+                className="overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md max-md:rounded-xl"
               >
                 <button
                   type="button"
                   onClick={() => toggleExpanded(subject)}
                   aria-expanded={isOpen}
                   aria-controls={panelId}
-                  className="block w-full p-4 text-left text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0f8b8d] focus-visible:ring-offset-2"
+                  className="block w-full p-4 text-left text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0f8b8d] focus-visible:ring-offset-2 max-md:min-h-[46px] max-md:px-2.5 max-md:py-1.5"
                 >
-                  <span className="flex items-start gap-3">
+                  <span className="flex items-start gap-3 max-md:gap-2">
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-medium text-slate-900">
+                        <span className="text-base font-medium text-slate-900 max-md:text-sm">
                           {subject}
                         </span>
                         {entry.weightPercent > 0 ? (
@@ -375,7 +376,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                         )}
                       </span>
                       <span
-                        className="mt-2 block h-3 w-full overflow-hidden rounded-full border border-slate-200 bg-slate-100"
+                        className="mt-2 block h-3 w-full overflow-hidden rounded-full border border-slate-200 bg-slate-100 max-md:mt-1 max-md:h-1.5"
                         aria-hidden="true"
                       >
                         <span
@@ -383,7 +384,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                           style={{ width: `${completion}%` }}
                         />
                       </span>
-                      <span className="mt-1.5 flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                      <span className="mt-1.5 flex items-center justify-between gap-3 text-xs font-medium text-slate-600 max-md:mt-0.5">
                         <span>
                           {entry.done} / {entry.total} topics done
                         </span>
@@ -397,43 +398,43 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                 </button>
 
                 {isOpen ? (
-                  <div id={panelId} className="border-t border-slate-200 bg-slate-50 p-4">
+                  <div id={panelId} className="border-t border-slate-200 bg-slate-50 p-4 max-md:p-2">
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => handleMarkAll(subject)}
-                        className="rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#00696b]"
+                        className="min-h-10 rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#00696b] max-md:min-h-10 max-md:px-2 max-md:text-[11px]"
                       >
                         Mark all
                       </button>
                       <button
                         type="button"
                         onClick={() => handleClear(subject)}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                        className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 max-md:min-h-10 max-md:px-2 max-md:text-[11px]"
                       >
                         Clear
                       </button>
                       <button
                         type="button"
                         onClick={() => onNavigate('practice')}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#0f8b8d]/40 bg-[#0f8b8d]/10 px-3 py-1.5 text-xs font-medium text-[#0f8b8d] hover:bg-[#0f8b8d]/20"
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[#0f8b8d]/40 bg-[#0f8b8d]/10 px-3 py-1.5 text-xs font-medium text-[#0f8b8d] hover:bg-[#0f8b8d]/20 max-md:min-h-10 max-md:px-2 max-md:text-[11px]"
                       >
                         Practice this subject
                         <ArrowRight size={14} />
                       </button>
                     </div>
 
-                    <section className="mt-4">
+                    <section className="mt-4 max-md:mt-2">
                       <h4 className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
                         <Sparkles size={15} className="text-[#0f8b8d]" />
                         High-yield topics
                       </h4>
                       {highYield.length > 0 ? (
-                        <ul className="mt-2 space-y-1.5">
+                        <ul className="mt-2 space-y-1.5 max-md:mt-1 max-md:space-y-0">
                           {highYield.map((item, index) => (
                             <li
                               key={`${item.topic}-${item.unit}-${index}`}
-                              className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700"
+                              className="flex min-h-10 flex-wrap items-center gap-2 text-sm font-semibold text-slate-700 max-md:min-h-10 max-md:gap-1 max-md:text-xs"
                             >
                               <span className="min-w-0 flex-1">{item.topic}</span>
                               <span className="rounded-md border border-[#0f8b8d]/30 bg-white px-1.5 py-0.5 text-[11px] font-medium text-[#0f8b8d]">
@@ -454,7 +455,7 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                       )}
                     </section>
 
-                    <section className="mt-4">
+                    <section className="mt-4 max-md:mt-2">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <h4 className="text-sm font-medium text-slate-800">Topics</h4>
                         <span className="text-xs font-medium text-slate-500">
@@ -466,12 +467,12 @@ export const SyllabusTrackerView: React.FC<{ exam: ExamType; onNavigate: (v: App
                           No topics match your search in this subject.
                         </p>
                       ) : (
-                        <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                        <ul className="mt-2 grid gap-1 sm:grid-cols-2 max-md:mt-1 max-md:gap-0">
                           {topics.map((topic) => {
                             const checked = subjectDone?.has(topic) ?? false;
                             return (
                               <li key={topic}>
-                                <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-200 hover:bg-white motion-reduce:transition-none">
+                                <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-200 hover:bg-white motion-reduce:transition-none max-md:min-h-11 max-md:py-1 max-md:text-xs">
                                   <input
                                     type="checkbox"
                                     checked={checked}

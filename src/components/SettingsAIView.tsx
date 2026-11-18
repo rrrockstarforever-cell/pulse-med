@@ -24,7 +24,8 @@ import {
   Plus,
   Pencil,
   Zap,
-  Save
+  Save,
+  ChevronDown
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { AIProvider } from '../types.ts';
@@ -122,25 +123,6 @@ const REAL_PROVIDERS: AIProvider[] = [
     ]
   },
   {
-    id: 'opencode',
-    name: 'OpenCode (Console / Go)',
-    brand: 'opencode',
-    model: DEFAULT_MODELS.opencode,
-    status: 'ready',
-    type: 'API Key (OpenCode Console)',
-    features: ['Console / Go API key', 'OpenAI-compatible gateway'],
-    isDefault: false,
-    isSignedIn: false,
-    hasTokenConfigured: false,
-    availableModels: [
-      { id: DEFAULT_MODELS.opencode, name: 'DeepSeek V4.1 Flash (Default)', description: 'Default fast model', latencyEstimate: '—', contextWindow: '—' },
-      { id: 'grok-4.7', name: 'Grok 4.7', description: 'Go-included', latencyEstimate: '—', contextWindow: '—' },
-      { id: 'qwen3.8-flash', name: 'Qwen 3.8 Flash', description: 'Go-included', latencyEstimate: '—', contextWindow: '—' },
-      { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', description: 'Go-included', latencyEstimate: '—', contextWindow: '—' },
-      { id: 'gemini-4-argon', name: 'Gemini 4 Argon', description: 'Go-included (Google)', latencyEstimate: '—', contextWindow: '—' },
-    ]
-  },
-  {
     id: 'deeprelay',
     name: 'Deep Relay (DeepSeek)',
     brand: 'deepseek',
@@ -199,7 +181,15 @@ export const SettingsAIView: React.FC = () => {
   const [authSuccess, setAuthSuccess] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
 
-  // Key-based providers (Gemini, OpenCode): the pasted key never leaves the local server.
+  // Phone-only accordion state for Settings sections. Desktop always shows every section.
+  const [openSettingsSections, setOpenSettingsSections] = useState<Record<string, boolean>>({ routing: true });
+  const isSettingsSectionOpen = (id: string) => openSettingsSections[id] ?? false;
+  const toggleSettingsSection = (id: string) =>
+    setOpenSettingsSections((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
+  const sectionBodyClass = (id: string) =>
+    `${isSettingsSectionOpen(id) ? 'block' : 'hidden'} md:block`;
+
+  // Key-based providers: the pasted key never leaves the local server.
   const [keyInput, setKeyInput] = useState<string>('');
   const [isSavingKey, setIsSavingKey] = useState<boolean>(false);
   const [keySavedMsg, setKeySavedMsg] = useState<string | null>(null);
@@ -403,7 +393,7 @@ export const SettingsAIView: React.FC = () => {
     setDeviceCodeData(null);
     setPkceData(null);
 
-    if (provider.id === 'gemini' || provider.id === 'opencode' || provider.id === 'deeprelay') {
+    if (provider.id === 'gemini' || provider.id === 'deeprelay') {
       // Key-based providers: the pasted key is handled inside the modal.
       setIsLoadingFlow(false);
       return;
@@ -572,15 +562,13 @@ export const SettingsAIView: React.FC = () => {
     }
   };
 
-  // Save the pasted key (Gemini, OpenCode or Deep Relay); the server stores it in the user's data dir.
+  // Save the pasted key (Gemini or Deep Relay); the server stores it in the user's data dir.
   const handleSaveKey = async () => {
     const key = keyInput.trim();
     if (!key || !selectedProvider) return;
-    const endpoint = selectedProvider.id === 'opencode' ? '/api/settings/opencode-key'
-      : selectedProvider.id === 'deeprelay' ? '/api/settings/deeprelay-key'
+    const endpoint = selectedProvider.id === 'deeprelay' ? '/api/settings/deeprelay-key'
       : '/api/settings/gemini-key';
-    const label = selectedProvider.id === 'opencode' ? 'OpenCode'
-      : selectedProvider.id === 'deeprelay' ? 'Deep Relay'
+    const label = selectedProvider.id === 'deeprelay' ? 'Deep Relay'
       : 'Gemini';
     setIsSavingKey(true);
     setAuthError(null);
@@ -846,9 +834,9 @@ export const SettingsAIView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto rounded-[28px] p-3 dark:dark:dark:sm:p-5">
+    <div className="space-y-2.5 md:space-y-6 max-w-7xl mx-auto rounded-[28px] max-md:rounded-2xl p-2.5 md:p-3 dark:dark:dark:sm:p-5 max-md:[&_button]:min-h-10">
       {/* AI Dojo — status strip */}
-      <section className="relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:sm:p-6">
+      <section className="relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:sm:p-6 max-md:hidden">
         <div className="pointer-events-none absolute -right-10 -top-12 h-48 w-48 rounded-full bg-[#0f8b8d]/15 blur-2xl" />
         <div className="pointer-events-none absolute inset-0 opacity-[0.08] [background-image:radial-gradient(#14110F_1px,transparent_1px)] dark:[background-image:radial-gradient(#EEEEED_1px,transparent_1px)]" />
         <div className="relative z-10 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -897,11 +885,26 @@ export const SettingsAIView: React.FC = () => {
       </section>
 
       {/* Grid: Left Info/Security, Right Provider Cards with Sign-In */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 md:gap-6">
         {/* Left Column: Server-Keyed Security & Model Routing Info */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div className="lg:col-span-5 space-y-2.5 md:space-y-6">
+          <div className="bg-white rounded-2xl p-3 md:p-6 border border-slate-200 shadow-sm space-y-3 md:space-y-5 max-md:overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSettingsSection('routing')}
+              className="md:hidden flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+              aria-expanded={isSettingsSectionOpen('routing')}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-50 text-[#0f8b8d] dark:bg-teal-500/10">
+                  <Radio className="h-4 w-4" />
+                </span>
+                <span className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-100">Active Engine & Model Routing</span>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isSettingsSectionOpen('routing') ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 max-md:hidden md:mt-0">
               <div>
                 <h3 className="text-base font-medium text-slate-900 flex items-center gap-2">
                   <Radio className="w-4 h-4 text-[#0f8b8d]" /> Active Engine & Model Routing
@@ -915,14 +918,15 @@ export const SettingsAIView: React.FC = () => {
               </span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+            <div className={`${sectionBodyClass('routing')} space-y-2.5 md:space-y-5`}>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-3 max-md:p-3 max-md:space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-semibold">Active Provider:</span>
                 <span className="font-mono font-bold text-[#0f8b8d] truncate max-w-[60%] text-right">
                   {activeProviderId} · {models[activeProviderId] || getEffectiveModel(activeProviderId as any)}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
+              <p className="text-[11px] text-slate-500 leading-relaxed max-md:line-clamp-2">
                 The active engine is used by the AI Tutor, Practice Module Builder, and any other AI action. Change it with “Use Engine” on any connected provider card.
               </p>
             </div>
@@ -938,11 +942,27 @@ export const SettingsAIView: React.FC = () => {
                 <span className="font-mono font-medium text-slate-800">user data dir \.env</span>
               </div>
             </div>
+            </div>
           </div>
 
           {/* MCQ generation concurrency */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="bg-white rounded-2xl p-3 md:p-6 border border-slate-200 shadow-sm space-y-3 md:space-y-4 max-md:overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSettingsSection('mcq')}
+              className="md:hidden flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+              aria-expanded={isSettingsSectionOpen('mcq')}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-50 text-[#0f8b8d] dark:bg-teal-500/10">
+                  <Zap className="h-4 w-4" />
+                </span>
+                <span className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-100">MCQ generation concurrency</span>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isSettingsSectionOpen('mcq') ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 max-md:hidden md:mt-0">
               <div>
                 <h3 className="text-base font-medium text-slate-900 flex items-center gap-2">
                   <Zap className="w-4 h-4 text-[#0f8b8d]" /> MCQ generation concurrency
@@ -956,7 +976,8 @@ export const SettingsAIView: React.FC = () => {
               </span>
             </div>
 
-            <div className="space-y-2 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+            <div className={`${sectionBodyClass('mcq')} space-y-2.5 md:space-y-4`}>
+            <div className="space-y-2 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60 max-md:p-2.5">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-semibold text-slate-600 dark:text-slate-300">Concurrent requests</span>
                 <span className="rounded-full border border-[#0f8b8d]/30 bg-[#0f8b8d]/10 px-2 py-0.5 font-mono text-[11px] font-bold text-[#0f8b8d]">
@@ -989,15 +1010,31 @@ export const SettingsAIView: React.FC = () => {
               >
                 Use Auto
               </button>
-              <p className="text-[10px] leading-relaxed text-slate-500">
+              <p className="text-[10px] leading-relaxed text-slate-500 max-md:line-clamp-2">
                 Auto keeps the current provider-specific text limit and uses 3 image questions at once. A manual limit applies to both text and image questions in the next generation run.
               </p>
+            </div>
             </div>
           </div>
 
           {/* OCR engine pool — whole-book OCR runs this many Tesseract workers in parallel */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="bg-white rounded-2xl p-3 md:p-6 border border-slate-200 shadow-sm space-y-3 md:space-y-4 max-md:overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSettingsSection('ocr')}
+              className="md:hidden flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+              aria-expanded={isSettingsSectionOpen('ocr')}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-50 text-[#0f8b8d] dark:bg-teal-500/10">
+                  <ScanText className="h-4 w-4" />
+                </span>
+                <span className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-100">OCR Engine & Worker Pool</span>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isSettingsSectionOpen('ocr') ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 max-md:hidden md:mt-0">
               <div>
                 <h3 className="text-base font-medium text-slate-900 flex items-center gap-2">
                   <ScanText className="w-4 h-4 text-[#0f8b8d]" /> OCR Engine & Worker Pool
@@ -1011,7 +1048,8 @@ export const SettingsAIView: React.FC = () => {
               </span>
             </div>
 
-            <div className="space-y-2 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+            <div className={`${sectionBodyClass('ocr')} space-y-2.5 md:space-y-4`}>
+            <div className="space-y-2 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60 max-md:p-2.5">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-semibold text-slate-600 dark:text-slate-300">Parallel workers</span>
                 <span className="rounded-full border border-[#0f8b8d]/30 bg-[#0f8b8d]/10 px-2 py-0.5 font-mono text-[11px] font-bold text-[#0f8b8d]">{ocrWorkers}</span>
@@ -1080,15 +1118,31 @@ export const SettingsAIView: React.FC = () => {
               </button>
             </div>
 
-            <p className="text-[10px] leading-relaxed text-slate-500">
+            <p className="text-[10px] leading-relaxed text-slate-500 max-md:line-clamp-2">
               More workers scan a book faster. Each worker loads its own Tesseract engine (roughly 60–100 MB of RAM),
               so stay near your spare CPU threads. The new pool size applies to the next OCR job.
             </p>
+            </div>
           </div>
 
           {/* Live clinical-image sources for image-based questions */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="bg-white rounded-2xl p-3 md:p-6 border border-slate-200 shadow-sm space-y-3 md:space-y-4 max-md:overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSettingsSection('images')}
+              className="md:hidden flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+              aria-expanded={isSettingsSectionOpen('images')}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-50 text-[#0f8b8d] dark:bg-teal-500/10">
+                  <Images className="h-4 w-4" />
+                </span>
+                <span className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-100">Image Sources for Questions</span>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isSettingsSectionOpen('images') ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 max-md:hidden md:mt-0">
               <div>
                 <h3 className="text-base font-medium text-slate-900 flex items-center gap-2">
                   <Images className="w-4 h-4 text-[#0f8b8d]" /> Image Sources for Questions
@@ -1106,7 +1160,8 @@ export const SettingsAIView: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex items-start justify-between gap-3 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60">
+            <div className={`${sectionBodyClass('images')} space-y-2.5 md:space-y-4`}>
+            <div className="flex items-start justify-between gap-3 rounded-[16px] border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/60 max-md:p-2.5">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Live search at generation time</span>
@@ -1114,8 +1169,8 @@ export const SettingsAIView: React.FC = () => {
                     {liveImages ? 'ON' : 'OFF'}
                   </span>
                 </div>
-                <p className="mt-1 text-[10px] leading-snug text-slate-600 dark:text-slate-400">
-                  Embedded sources: Wikimedia Commons / Open-i (CC0 or Public Domain only). Reference-only atlases open on their own site and are never copied into the app.
+                <p className="mt-1 text-[10px] leading-snug text-slate-600 dark:text-slate-400 max-md:line-clamp-2">
+                  Embedded sources: Wikimedia Commons / Open-i (CC0, Public Domain, CC BY or CC BY-SA with credit). Reference-only atlases open on their own site and are never copied into the app.
                 </p>
                 <p className="mt-1 text-[10px] leading-snug text-slate-600 dark:text-slate-400">
                   Results are proxied and cached locally with source and licence retained.
@@ -1168,37 +1223,72 @@ export const SettingsAIView: React.FC = () => {
                 </p>
               </div>
             ) : null}
+            </div>
           </div>
 
           {/* Privacy Guard */}
-          <div className="bg-slate-900 rounded-2xl p-5 text-white border border-slate-800 shadow-sm space-y-3">
-            <div className="flex items-center gap-2 text-xs font-medium text-emerald-400 uppercase tracking-wider">
+          <div className="bg-slate-900 rounded-2xl p-3 md:p-5 text-white border border-slate-800 shadow-sm space-y-2 md:space-y-3 max-md:overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSettingsSection('privacy')}
+              className="md:hidden flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+              aria-expanded={isSettingsSectionOpen('privacy')}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300">
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <span className="truncate text-[15px] font-semibold text-white">Server-Keyed Session Security</span>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isSettingsSectionOpen('privacy') ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="flex items-center gap-2 text-xs font-medium text-emerald-400 uppercase tracking-wider max-md:hidden md:mt-0">
               <ShieldCheck className="w-4 h-4" /> Server-Keyed Session Security
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <div className={`${sectionBodyClass('privacy')} space-y-2 md:space-y-3`}>
+            <p className="text-xs text-slate-300 leading-relaxed max-md:line-clamp-2">
               Subscription tokens and your Gemini key live only on this machine, managed by the local server. They are never returned to the browser and never committed to repository storage.
             </p>
+            </div>
           </div>
         </div>
 
         {/* Right Column: AI Providers with Sign-In Buttons */}
-        <div className="lg:col-span-7 space-y-4">
-          <div id="ai-provider-hub" className="scroll-mt-6 flex flex-col gap-3 rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 flex items-center gap-2">
+        <div className="lg:col-span-7 space-y-2.5 md:space-y-4">
+          <div
+            id="ai-provider-hub"
+            role="button"
+            tabIndex={0}
+            onClick={() => toggleSettingsSection('providers')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleSettingsSection('providers');
+              }
+            }}
+            aria-expanded={isSettingsSectionOpen('providers')}
+            className="scroll-mt-6 flex cursor-pointer flex-col gap-2 rounded-[20px] max-md:rounded-xl border border-slate-200 bg-white p-3 md:p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between md:cursor-default max-md:overflow-hidden"
+          >
+            <div className="min-w-0">
+              <h3 className="text-[15px] md:text-base font-semibold md:font-medium text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-500" /> Provider Dojo & Model Routing
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 max-md:line-clamp-2">
                 Pick one signed-in engine or connect a provider. The active engine routes every AI action.
               </p>
             </div>
-            <span className="rounded-full border border-[#0f8b8d]/30 bg-[#0f8b8d]/10 px-3 py-1 text-xs font-medium text-[#0f8b8d]">
-              {providers.filter(p => p.hasTokenConfigured).length} of {providers.length} connected
+            <span className="flex items-center justify-between gap-2 sm:justify-end">
+              <span className="rounded-full border border-[#0f8b8d]/30 bg-[#0f8b8d]/10 px-3 py-1 text-xs font-medium text-[#0f8b8d]">
+                {providers.filter(p => p.hasTokenConfigured).length} of {providers.length} connected
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform md:hidden ${isSettingsSectionOpen('providers') ? 'rotate-180' : ''}`} />
             </span>
           </div>
 
+          <div className={`${sectionBodyClass('providers')} space-y-2.5 md:space-y-4`}>
           {/* Live model catalog + account library status */}
-          <div className="grid gap-2 rounded-[18px] border border-slate-200 bg-white/70 p-3 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300 sm:grid-cols-2">
+          <div className="grid gap-2 rounded-[18px] border border-slate-200 bg-white/70 p-3 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300 sm:grid-cols-2 max-md:rounded-xl max-md:p-2.5">
             <div className="rounded-xl border border-slate-200 bg-white/70 p-2.5 dark:border-slate-700 dark:bg-slate-900/60">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[9px] font-medium uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Account library</span>
@@ -1306,7 +1396,7 @@ export const SettingsAIView: React.FC = () => {
                   initial={reduceMotion ? false : { opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : Math.min(index * 0.03, 0.2) }}
-                  className={`relative overflow-hidden rounded-[20px] border p-4 transition-all dark:sm:p-5 ${
+                  className={`relative overflow-hidden rounded-[20px] max-md:rounded-xl border p-3 md:p-4 transition-all dark:sm:p-5 ${
                     isActive
                       ? 'border-[#0f8b8d] ring-2 ring-[#0f8b8d]/20 bg-teal-50/10 dark:bg-slate-900'
                       : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900'
@@ -1317,7 +1407,7 @@ export const SettingsAIView: React.FC = () => {
                     type="button"
                     onClick={() => setExpandedProviders((prev) => ({ ...prev, [p.id]: !isExpanded }))}
                     aria-expanded={isExpanded}
-                    className="relative z-10 w-full flex flex-col gap-3 text-left sm:flex-row sm:items-center sm:justify-between"
+                    className="relative z-10 w-full flex flex-col gap-2 md:gap-3 text-left sm:flex-row sm:items-center sm:justify-between"
                   >
                     <span className="flex min-w-0 flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{p.name}</span>
@@ -1340,7 +1430,7 @@ export const SettingsAIView: React.FC = () => {
                     </span>
                   </button>
                   {isExpanded && (
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap justify-between gap-3 min-w-0 w-full">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap justify-between gap-2 md:gap-3 min-w-0 w-full">
                     <div className="flex items-start gap-3">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-medium text-sm shrink-0 shadow-xs ${
                         p.id === 'gemini' 
@@ -1349,8 +1439,6 @@ export const SettingsAIView: React.FC = () => {
                             ? 'bg-gradient-to-br from-amber-600 to-orange-700 text-white'
                             : p.id === 'chatgpt'
                               ? 'bg-gradient-to-br from-emerald-600 to-teal-800 text-white'
-                              : p.id === 'opencode'
-                                ? 'bg-gradient-to-br from-[#0f8b8d] to-[#001432] text-white'
                               : p.id === 'custom'
                                 ? 'bg-gradient-to-br from-violet-600 to-purple-800 text-white'
                                 : 'bg-gradient-to-br from-slate-800 to-black text-white'
@@ -1392,7 +1480,7 @@ export const SettingsAIView: React.FC = () => {
                                 }
                               }}
                               title={`${liveAccountModels.length} model${liveAccountModels.length === 1 ? '' : 's'} found on this account`}
-                              className="max-w-[340px] text-[11px] font-mono px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]"
+                              className="max-md:w-full max-w-[340px] text-[11px] font-mono px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]"
                             >
                               {!liveAccountModels.some((m) => m.id === selectedModelId) && (
                                 <option value={selectedModelId}>{selectedModelId} (current)</option>
@@ -1409,7 +1497,7 @@ export const SettingsAIView: React.FC = () => {
                               type="text"
                               value={models[p.id] ?? p.model}
                               onChange={(e) => handleModelChange(p.id, e.target.value)}
-                              className="w-52 text-[11px] font-mono px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]"
+                              className="w-full md:w-52 text-[11px] font-mono px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]"
                               list={`models-${p.id}`}
                               placeholder={p.model}
                             />
@@ -1495,7 +1583,7 @@ export const SettingsAIView: React.FC = () => {
 
                     {/* Controls: Sign In Button or Connected State + Set Active */}
                     <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                  {(p.id === 'gemini' || p.id === 'opencode' || p.id === 'deeprelay') ? (
+                  {(p.id === 'gemini' || p.id === 'deeprelay') ? (
                         <div className="flex items-center gap-2">
                           <span className={`text-xs font-medium px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
                             isConnected
@@ -1631,6 +1719,7 @@ export const SettingsAIView: React.FC = () => {
               );
             })}
           </div>
+          </div>
         </div>
       </div>
 
@@ -1652,10 +1741,8 @@ export const SettingsAIView: React.FC = () => {
                   <h3 className="text-base font-medium text-slate-900 dark:text-slate-100">
                     {selectedProvider.id === 'gemini'
                       ? 'Gemini API Key'
-                      : selectedProvider.id === 'opencode'
-                        ? 'OpenCode API Key'
-                          : selectedProvider.id === 'deeprelay'
-                            ? 'Deep Relay API Key'
+                      : selectedProvider.id === 'deeprelay'
+                        ? 'Deep Relay API Key'
                           : selectedProvider.id === 'custom' && editingEndpoint
                             ? 'Edit Endpoint'
                             : selectedProvider.id === 'custom'
@@ -1669,9 +1756,7 @@ export const SettingsAIView: React.FC = () => {
                         ? 'Paste-code PKCE flow' 
                         : selectedProvider.id === 'gemini'
                           ? 'Key saved locally — never shown again'
-                          : selectedProvider.id === 'opencode'
-                            ? 'Console / Go key saved locally — never shown again'
-                            : selectedProvider.id === 'deeprelay'
+                          : selectedProvider.id === 'deeprelay'
                               ? 'Key saved locally — never shown again'
                               : selectedProvider.id === 'custom' && editingEndpoint
                                 ? 'Configure your custom endpoint below.'
@@ -1693,7 +1778,7 @@ export const SettingsAIView: React.FC = () => {
 
             {/* This is the real local flow, not a web demo: the code comes from the
                 provider right now and the token is stored on this computer only. */}
-                {selectedProvider.id !== 'gemini' && selectedProvider.id !== 'opencode' && selectedProvider.id !== 'deeprelay' && selectedProvider.id !== 'custom' && (
+                {selectedProvider.id !== 'gemini' && selectedProvider.id !== 'deeprelay' && selectedProvider.id !== 'custom' && (
               <p className="text-[11px] leading-relaxed text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
                 {selectedProvider.id === 'claude'
                   ? 'Open the Claude approval page, sign in, then paste the code Claude shows you. The token stays on this computer.'
@@ -2017,8 +2102,8 @@ export const SettingsAIView: React.FC = () => {
               </div>
             )}
 
-            {/* Key-based providers: Gemini, OpenCode, Deep Relay */}
-                  {(selectedProvider.id === 'gemini' || selectedProvider.id === 'opencode' || selectedProvider.id === 'deeprelay') && (
+            {/* Key-based providers: Gemini and Deep Relay */}
+            {(selectedProvider.id === 'gemini' || selectedProvider.id === 'deeprelay') && (
               <div className="space-y-4 py-2">
                 <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
                   <div className="flex items-center gap-2 font-medium text-slate-800">
@@ -2026,9 +2111,7 @@ export const SettingsAIView: React.FC = () => {
                     <span>Server-Side Key Handling</span>
                   </div>
                   <p className="text-slate-600 leading-relaxed">
-                    {selectedProvider.id === 'opencode'
-                      ? 'Create an API key in the OpenCode Console (console.opencode.ai) and paste it here. It is saved by the local server to your user data directory (.env, outside the repo) and is never displayed again or sent back to the browser. If you already use the OpenCode CLI on this machine, its stored key is used automatically.'
-                        : selectedProvider.id === 'deeprelay'
+                    {selectedProvider.id === 'deeprelay'
                           ? 'Paste your Deep Relay API key here. It is saved by the local server to your user data directory (.env, outside the repo) and is never displayed again or sent back to the browser.'
                         : 'Create the key in Google AI Studio and paste it here. It is saved by the local server to your user data directory (.env, outside the repo) and is never displayed again or sent back to the browser.'}
                   </p>
@@ -2036,9 +2119,7 @@ export const SettingsAIView: React.FC = () => {
 
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-slate-700 block">
-                    {selectedProvider.id === 'opencode'
-                      ? 'OpenCode API Key'
-                        : selectedProvider.id === 'deeprelay'
+                    {selectedProvider.id === 'deeprelay'
                           ? 'Deep Relay API Key'
                           : 'Gemini API Key'}
                   </label>
@@ -2048,8 +2129,7 @@ export const SettingsAIView: React.FC = () => {
                     onChange={(e) => setKeyInput(e.target.value)}
                     autoComplete="off"
                     spellCheck={false}
-                    placeholder={selectedProvider.id === 'opencode' ? 'sk-… / your OpenCode Console API key'
-                        : selectedProvider.id === 'deeprelay'
+                    placeholder={selectedProvider.id === 'deeprelay'
                           ? 'your Deep Relay API key'
                           : 'AIza… / your Gemini API key'}
                     className="w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#0f8b8d] focus:ring-2 focus:ring-[#0f8b8d] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"

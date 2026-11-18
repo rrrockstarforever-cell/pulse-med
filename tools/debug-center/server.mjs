@@ -3,7 +3,6 @@
  * Pulse Med — Debug Control Center
  *
  * A local-only dashboard that can launch/stop the app, stream logs, run tests,
- * build the Windows installer, send instructions to the active OpenCode agent,
  * and manage checkpoints. It deliberately exposes NO arbitrary-command endpoint:
  * every action below is a fixed, reviewed command.
  *
@@ -22,9 +21,6 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..', '..');
 const PUBLIC = path.join(__dirname, 'public');
 const DATA = path.join(ROOT, 'debug-center-data');
-const SHOTS = path.join(DATA, 'screenshots');
-const JOBS = path.join(DATA, 'jobs');
-const INSTRUCTIONS = path.join(DATA, 'instructions');
 const CHECKPOINTS = path.join(DATA, 'checkpoints');
 const TOKEN_FILE = path.join(DATA, '.token');
 const STATE_FILE = path.join(DATA, 'state.json');
@@ -39,7 +35,7 @@ const DEV_PORT = 3400;
 const PROD_PORT = 3401;
 const ELECTRON_PORT = 3217;
 
-for (const dir of [DATA, SHOTS, JOBS, INSTRUCTIONS, CHECKPOINTS]) fs.mkdirSync(dir, { recursive: true });
+for (const dir of [DATA, CHECKPOINTS]) fs.mkdirSync(dir, { recursive: true });
 
 // ---------------------------------------------------------------------------
 // small utilities
@@ -62,13 +58,6 @@ function safeEqual(a, b) {
   const bb = Buffer.from(String(b || ''));
   if (ab.length !== bb.length) return false;
   return crypto.timingSafeEqual(ab, bb);
-}
-function which(cmd) {
-  try {
-    const r = spawnSync('where.exe', [cmd], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
-    if (r.status === 0) return (r.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || null;
-  } catch { /* not found */ }
-  return null;
 }
 function fileExists(p) { try { return fs.statSync(p).isFile(); } catch { return false; } }
 function dirExists(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
@@ -189,21 +178,11 @@ function queryLogs({ since = 0, level = '', q = '', source = '', limit = 400 } =
 // persisted state
 // ---------------------------------------------------------------------------
 const defaultState = {
-  agent: {
-    cliPath: process.env.OPENCODE_CLI || '',
-    sessionId: process.env.OPENCODE_SESSION_ID || '',
-    model: process.env.OPENCODE_MODEL || 'opencode/deepseek-v4.1-flash-free',
-    autoApprove: true,
-    lastProbe: null,
-  },
   appMode: 'dev',
   lastCheckpoint: null,
   checkpoints: [],
 };
 const state = { ...defaultState, ...readJson(STATE_FILE, {}) };
-state.agent = { ...defaultState.agent, ...(state.agent || {}) };
-if (process.env.OPENCODE_SESSION_ID) state.agent.sessionId = process.env.OPENCODE_SESSION_ID;
-if (process.env.OPENCODE_CLI) state.agent.cliPath = process.env.OPENCODE_CLI;
 
 const buildState = readJson(BUILD_FILE, {
   lastBuild: null, lastTest: null, lastPackage: null, running: null,
@@ -918,303 +897,6 @@ async function restoreCheckpoint(file, confirm) {
 }
 
 // ---------------------------------------------------------------------------
-// agent bridge (OpenCode CLI — the runtime this session is executing in)
-// ---------------------------------------------------------------------------
-const jobs = new Map();
-let runningAgentJob = null;
-
-function loadJobs() {
-  if (!dirExists(JOBS)) return;
-  const files = fs.readdirSync(JOBS).filter((f) => /\.json$/i.test(f)).sort().slice(-30);
-  for (const f of files) {
-    const rec = readJson(path.join(JOBS, f), null);
-    if (rec && rec.id) jobs.set(rec.id, rec);
-  }
-}
-loadJobs();
-
-function detectCli() {
-  const candidates = [
-    state.agent.cliPath,
-    process.env.OPENCODE_CLI,
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', '@opencodedesktop', 'resources', 'opencode-cli.exe'),
-    which('opencode'),
-  ].filter(Boolean);
-  for (const c of candidates) {
-    if (fileExists(c)) return c;
-  }
-  return null;
-}
-
-function listAgentSessions() {
-  const cli = detectCli();
-  if (!cli) return { ok: false, error: 'OpenCode CLI not found.', sessions: [] };
-  const r = runSync(cli, ['session', 'list'], { timeoutMs: 25_000 });
-  if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || 'session list failed').trim().slice(0, 600), sessions: [] };
-  const sessions = (r.stdout || '').split(/\r?\n/)
-    .map((line) => {
-      const m = line.match(/^(ses_[A-Za-z0-9]+)\s+(.*?)\s{2,}(.*)$/);
-      if (!m) return null;
-      return { id: m[1], title: (m[2] || '').trim(), updated: (m[3] || '').trim() };
-    })
-    .filter(Boolean);
-  return { ok: true, sessions };
-}
-
-function agentStatus() {
-  const cli = detectCli();
-  const available = Boolean(cli);
-  let version = null;
-  if (cli) {
-    const v = runSync(cli, ['--version'], { timeoutMs: 15_000 });
-    if (v.status === 0) version = (v.stdout || '').trim().split(/\r?\n/)[0];
-  }
-  return {
-    available,
-    cliPath: cli,
-    version,
-    sessionId: state.agent.sessionId || null,
-    model: state.agent.model || null,
-    autoApprove: state.agent.autoApprove !== false,
-    lastProbe: state.agent.lastProbe || null,
-    runningJob: runningAgentJob ? jobSnapshot() : null,
-    transport: 'opencode-cli --format json',
-    note: 'Instructions are delivered to the active OpenCode/Hermes agent session. If the bridge is unavailable, the control center writes a clearly labelled manual handoff file.',
-  };
-}
-
-async function probeAgent() {
-  const cli = detectCli();
-  const result = { at: nowIso(), cli, version: null, sessionId: state.agent.sessionId || null, sessionFound: false, error: null, sessions: [] };
-  if (!cli) {
-    result.error = 'OpenCode CLI not found. Set the path in Settings or use manual handoff.';
-    state.agent.lastProbe = result;
-    saveState();
-    return result;
-  }
-  const v = runSync(cli, ['--version'], { timeoutMs: 15_000 });
-  if (v.status === 0) result.version = (v.stdout || '').trim();
-  else result.error = (v.stderr || v.stdout || 'version check failed').trim();
-  const listed = listAgentSessions();
-  result.sessions = listed.sessions;
-  if (listed.sessions.length) {
-    if (state.agent.sessionId) {
-      result.sessionFound = listed.sessions.some((s) => s.id === state.agent.sessionId);
-      if (!result.sessionFound) {
-        result.error = 'The configured session ID is not in the current project session list.';
-        // A session this bridge created itself may not appear in `session list`; keep it.
-        if (state.agent.sessionSource === 'bridge') result.error = null;
-      } else {
-        state.agent.sessionFound = true;
-        if (state.agent.sessionSource !== 'bridge') state.agent.sessionSource = 'listed';
-      }
-    } else {
-      state.agent.sessionId = listed.sessions[0].id;
-      state.agent.sessionSource = 'listed';
-      state.agent.sessionFound = true;
-      result.sessionId = state.agent.sessionId;
-      result.sessionFound = true;
-    }
-  } else if (!result.error) {
-    result.error = listed.error || 'No sessions found.';
-  }
-  if (!result.sessionFound && state.agent.sessionSource !== 'bridge') state.agent.sessionFound = false;
-  state.agent.lastProbe = result;
-  saveState();
-  return result;
-}
-
-function writeManualInstruction(text, jobId, screenshotPath) {
-  const file = path.join(INSTRUCTIONS, `${jobId}.md`);
-  const body = [
-    `# Manual agent instruction`,
-    ``,
-    `Created: ${nowIso()}`,
-    screenshotPath ? `Screenshot: ${screenshotPath}` : '',
-    ``,
-    `## Instruction`,
-    ``,
-    text,
-    ``,
-    `## How to hand this to Hermes / OpenCode`,
-    ``,
-    `Open the active Hermes/OpenCode chat and paste the instruction above.`,
-    `The Debug Control Center could not reach a verified agent bridge, so it did not pretend to send anything.`,
-  ].filter(Boolean).join('\n');
-  fs.writeFileSync(file, body, 'utf8');
-  return file;
-}
-
-function extractAgentText(line) {
-  const trimmed = String(line || '').trim();
-  if (!trimmed) return null;
-  try {
-    const ev = JSON.parse(trimmed);
-    if (ev?.type === 'text' && ev?.part?.text) return String(ev.part.text);
-    if (ev?.type === 'tool_use') return null;
-    if (ev?.type === 'error' && ev?.error) return `ERROR: ${typeof ev.error === 'string' ? ev.error : JSON.stringify(ev.error)}`;
-    if (typeof ev?.message === 'string' && ev.message.trim()) return ev.message;
-    if (ev?.part?.type === 'text' && ev.part.text) return String(ev.part.text);
-  } catch { /* not JSON */ }
-  return null;
-}
-
-async function sendInstruction(text, screenshotPath = null) {
-  const prompt = String(text || '').trim();
-  if (!prompt) throw Object.assign(new Error('Instruction is empty.'), { status: 400 });
-  if (prompt.length > 30_000) throw Object.assign(new Error('Instruction is too long (max 30,000 characters).'), { status: 400 });
-  if (runningAgentJob && runningAgentJob.status === 'running') {
-    throw Object.assign(new Error('The agent is still working on the previous instruction. Wait for it to finish or cancel it.'), { status: 409 });
-  }
-  const cli = detectCli();
-  if (!cli) {
-    const id = uid('manual');
-    const file = writeManualInstruction(prompt, id, screenshotPath);
-    return { ok: false, manual: true, reason: 'OpenCode CLI not found.', instructionFile: file, text: prompt };
-  }
-  if (!state.agent.sessionId) {
-    const probe = await probeAgent();
-    if (!state.agent.sessionId) {
-      const id = uid('manual');
-      const file = writeManualInstruction(prompt, id, screenshotPath);
-      return { ok: false, manual: true, reason: probe.error || 'No agent session configured.', instructionFile: file, text: prompt };
-    }
-  }
-
-  // Only attach to a session the CLI can actually resume. `opencode session list`
-  // often reports "No sessions found." even when ids exist, so a session this
-  // bridge created itself is trusted by id; anything else starts fresh and the
-  // new id is adopted from the first NDJSON event.
-  const canResume = state.agent.sessionSource === 'bridge' || state.agent.sessionFound === true;
-  const resumeId = canResume ? state.agent.sessionId : null;
-
-  const job = {
-    id: uid('agent'),
-    kind: 'instruction',
-    status: 'running',
-    prompt,
-    sessionId: resumeId,
-    model: state.agent.model || null,
-    screenshot: screenshotPath || null,
-    startedAt: nowIso(),
-    finishedAt: null,
-    exitCode: null,
-    text: '',
-    events: 0,
-    toolCalls: 0,
-    error: null,
-    outputTail: [],
-    child: null,
-  };
-  const args = ['run', '--format', 'json'];
-  if (resumeId) args.push('--session', resumeId);
-  if (state.agent.autoApprove !== false) args.push('--auto');
-  if (job.model) args.push('--model', job.model);
-  if (screenshotPath) args.push('--file', screenshotPath);
-  args.push(prompt);
-  const promptFile = path.join(INSTRUCTIONS, `${job.id}.md`);
-  fs.writeFileSync(promptFile, `# Instruction ${job.id}\n\nSent: ${job.startedAt}\nSession: ${job.sessionId || 'new session (id captured from the first event)'}\nModel: ${job.model || 'session default'}\n\n${prompt}\n`, 'utf8');
-  job.instructionFile = promptFile;
-  const logFile = path.join(JOBS, `${job.id}.log`);
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-  logLine('info', 'agent', `Sending instruction ${job.id} to ${job.sessionId || 'a new session'}.`);
-  logLine('info', 'agent', `Prompt: ${prompt.slice(0, 300)}${prompt.length > 300 ? '…' : ''}`);
-
-  let lineBuf = '';
-  const consume = (chunk) => {
-    const textChunk = chunk.toString('utf8');
-    logStream.write(textChunk);
-    lineBuf += textChunk;
-    const lines = lineBuf.split(/\r?\n/);
-    lineBuf = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      job.events += 1;
-      job.outputTail.push(line.slice(0, 500));
-      if (job.outputTail.length > 200) job.outputTail.shift();
-      if (line.includes('"type":"tool')) job.toolCalls += 1;
-      // Adopt the session id the CLI reports for a freshly started session, so the
-      // next instruction continues the same conversation instead of starting over.
-      try {
-        const ev = JSON.parse(line);
-        const sid = typeof ev?.sessionID === 'string'
-          ? ev.sessionID
-          : (typeof ev?.part?.sessionID === 'string' ? ev.part.sessionID : null);
-        if (sid && /^ses_/.test(sid) && sid !== state.agent.sessionId) {
-          state.agent.sessionId = sid;
-          state.agent.sessionSource = 'bridge';
-          state.agent.sessionFound = true;
-          job.sessionId = sid;
-          saveState();
-          logLine('info', 'agent', `Adopted agent session ${sid}.`);
-        }
-      } catch { /* not JSON */ }
-      const extracted = extractAgentText(line);
-      if (extracted) job.text = (job.text + (job.text ? '\n' : '') + extracted).slice(-40_000);
-      logLine(levelFromText(line), 'agent', line.slice(0, 1200));
-    }
-  };
-  const childEnv = { ...process.env };
-  if (resumeId) childEnv.OPENCODE_SESSION_ID = resumeId;
-  const child = spawn(cli, args, { cwd: ROOT, windowsHide: true, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-  job.child = child;
-  runningAgentJob = job;
-  jobs.set(job.id, job);
-  child.stdout.on('data', consume);
-  child.stderr.on('data', (chunk) => {
-    const s = chunk.toString('utf8');
-    logStream.write(s);
-    job.error = ((job.error || '') + s).slice(-8000);
-    logLine('warn', 'agent', s.trim().slice(0, 1200));
-  });
-  const finalize = (code, signal) => {
-    if (lineBuf.trim()) consume(`\n${lineBuf}`);
-    logStream.end();
-    job.exitCode = code;
-    job.finishedAt = nowIso();
-    if (job.status !== 'cancelled') job.status = code === 0 ? 'succeeded' : 'failed';
-    if (code !== 0 && !job.error) job.error = `OpenCode exited with code ${code}${signal ? ` (${signal})` : ''}.`;
-    const { child: _c, ...persist } = job;
-    writeJson(path.join(JOBS, `${job.id}.json`), persist);
-    if (runningAgentJob?.id === job.id) runningAgentJob = null;
-    logLine(job.status === 'succeeded' ? 'info' : 'error', 'agent', `Instruction ${job.id} ${job.status} (${job.events} events, ${job.toolCalls} tool events).`);
-  };
-  child.on('error', (err) => {
-    job.error = String(err);
-    job.status = 'failed';
-    job.finishedAt = nowIso();
-    logStream.end();
-    if (runningAgentJob?.id === job.id) runningAgentJob = null;
-    logLine('error', 'agent', `Agent bridge failed: ${String(err)}`);
-  });
-  child.on('close', (code, signal) => finalize(code, signal));
-
-  // Give the CLI a moment to fail fast (bad session/model) before returning.
-  await sleep(800);
-  const { child: _c, ...snapshot } = job;
-  return { ok: true, job: snapshot, instructionFile: promptFile };
-}
-
-function cancelAgentJob(id) {
-  const job = runningAgentJob?.id === id ? runningAgentJob : null;
-  if (!job || !job.child) throw Object.assign(new Error('That agent job is not running.'), { status: 404 });
-  job.status = 'cancelled';
-  logLine('warn', 'agent', `Cancelling agent job ${id}.`);
-  runSync('taskkill.exe', ['/PID', String(job.child.pid), '/T', '/F'], { timeoutMs: 15_000 });
-  job.finishedAt = nowIso();
-  if (runningAgentJob?.id === id) runningAgentJob = null;
-  const { child: _c, ...persist } = job;
-  writeJson(path.join(JOBS, `${job.id}.json`), persist);
-  return { ok: true, job: persist };
-}
-
-function publicJob(job) {
-  if (!job) return null;
-  const { child, ...rest } = job;
-  return rest;
-}
-
-// ---------------------------------------------------------------------------
 // status
 // ---------------------------------------------------------------------------
 async function getStatus() {
@@ -1241,9 +923,8 @@ async function getStatus() {
     package: buildState.lastPackage,
     installer: findInstaller(),
     activeJob: jobSnapshot(),
-    agent: agentStatus(),
     checkpoints: listCheckpointFiles().slice(0, 10),
-    paths: { data: DATA, jobs: JOBS, instructions: INSTRUCTIONS, checkpoints: CHECKPOINTS, tokenFile: TOKEN_FILE },
+    paths: { data: DATA, checkpoints: CHECKPOINTS, tokenFile: TOKEN_FILE },
   };
 }
 
@@ -1409,91 +1090,6 @@ async function handle(req, res) {
     return;
   }
 
-  // ---- agent ----
-  if (req.method === 'GET' && pathname === '/api/agent') {
-    sendJson(res, 200, { agent: agentStatus(), jobs: [...jobs.values()].sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))).slice(0, 30).map(publicJob) });
-    return;
-  }
-  if (req.method === 'POST' && pathname === '/api/agent/config') {
-    const body = await readJsonBody(req);
-    if (body.sessionId !== undefined) {
-      const sid = String(body.sessionId || '').trim();
-      if (sid && !/^ses_[A-Za-z0-9]+$/.test(sid)) throw Object.assign(new Error('Session IDs look like ses_... .'), { status: 400 });
-      state.agent.sessionId = sid;
-      // A session typed in by the user is trusted; blank means "start fresh and adopt".
-      state.agent.sessionSource = sid ? 'manual' : null;
-      state.agent.sessionFound = sid ? true : false;
-    }
-    if (body.model !== undefined) state.agent.model = String(body.model || '').trim();
-    if (body.cliPath !== undefined) state.agent.cliPath = String(body.cliPath || '').trim();
-    if (body.autoApprove !== undefined) state.agent.autoApprove = Boolean(body.autoApprove);
-    saveState();
-    sendJson(res, 200, { ok: true, agent: agentStatus() });
-    return;
-  }
-  if (req.method === 'POST' && pathname === '/api/agent/probe') {
-    sendJson(res, 200, { ok: true, probe: await probeAgent(), agent: agentStatus() });
-    return;
-  }
-  if (req.method === 'GET' && pathname === '/api/agent/sessions') {
-    sendJson(res, 200, listAgentSessions());
-    return;
-  }
-  if (req.method === 'POST' && pathname === '/api/agent/instructions') {
-    const body = await readJsonBody(req);
-    let shot = null;
-    if (body.screenshotId) {
-      const id = String(body.screenshotId).replace(/[^a-z0-9_.-]/gi, '');
-      const candidates = fs.readdirSync(SHOTS).filter((f) => f.startsWith(id));
-      if (candidates.length) shot = path.join(SHOTS, candidates[0]);
-    }
-    const result = await sendInstruction(body.text, shot);
-    sendJson(res, result.manual ? 503 : 200, result);
-    return;
-  }
-  if (req.method === 'GET' && pathname === '/api/agent/jobs') {
-    sendJson(res, 200, {
-      running: runningAgentJob ? publicJob(runningAgentJob) : null,
-      jobs: [...jobs.values()].sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))).slice(0, 50).map(publicJob),
-    });
-    return;
-  }
-  if (req.method === 'GET' && pathname.startsWith('/api/agent/jobs/')) {
-    const id = pathname.split('/').pop();
-    const job = jobs.get(id);
-    if (!job) throw Object.assign(new Error('Agent job not found.'), { status: 404 });
-    sendJson(res, 200, { job: publicJob(job) });
-    return;
-  }
-  if (req.method === 'POST' && pathname.startsWith('/api/agent/jobs/') && pathname.endsWith('/cancel')) {
-    const id = pathname.split('/').slice(-2)[0];
-    sendJson(res, 200, cancelAgentJob(id));
-    return;
-  }
-
-  // ---- screenshots ----
-  if (req.method === 'POST' && pathname === '/api/screenshots') {
-    const body = await readJsonBody(req, 12 * 1024 * 1024);
-    const dataUrl = String(body.dataUrl || '');
-    const m = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=\s]+)$/i);
-    if (!m) throw Object.assign(new Error('Upload a PNG, JPEG or WebP image.'), { status: 400 });
-    const ext = m[1].toLowerCase() === 'jpg' ? 'jpeg' : m[1].toLowerCase();
-    const buf = Buffer.from(m[2].replace(/\s/g, ''), 'base64');
-    if (buf.length > 8 * 1024 * 1024) throw Object.assign(new Error('Screenshot is too large (max 8 MB).'), { status: 413 });
-    const id = uid('shot');
-    const file = `${id}.${ext}`;
-    fs.writeFileSync(path.join(SHOTS, file), buf);
-    logLine('info', 'screenshot', `Saved screenshot ${file} (${(buf.length / 1024).toFixed(0)} KB).`);
-    sendJson(res, 200, { ok: true, id, file, bytes: buf.length, note: body.note ? String(body.note).slice(0, 500) : null });
-    return;
-  }
-  if (req.method === 'GET' && pathname.startsWith('/api/screenshots/')) {
-    const file = path.basename(pathname.slice('/api/screenshots/'.length));
-    const full = path.join(SHOTS, file);
-    if (!fileExists(full)) throw Object.assign(new Error('Screenshot not found.'), { status: 404 });
-    serveStatic(res, full, contentTypeFor(full));
-    return;
-  }
 
   sendJson(res, 404, { error: 'Unknown endpoint.' });
 }
@@ -1513,11 +1109,6 @@ server.listen(PORT, HOST, () => {
   logLine('info', 'center', `Pulse Med Debug Control Center ${CENTER_VERSION} on http://${HOST}:${PORT}/`);
   logLine('info', 'center', `Repository: ${ROOT}`);
   logLine('info', 'center', `Auth token file: ${TOKEN_FILE}`);
-  // Probe the agent bridge asynchronously so the dashboard has a truthful state quickly.
-  probeAgent().then((p) => {
-    if (p.error) logLine('warn', 'agent', p.error);
-    else logLine('info', 'agent', `Bridge ready: ${p.version || 'OpenCode'} · session ${p.sessionId || 'none'}${p.sessionFound ? ' (found)' : ''}`);
-  }).catch(() => {});
   // Create an initial checkpoint once, so rollback is available before the first build.
   const existing = listCheckpointFiles();
   if (!existing.length) {
@@ -1529,7 +1120,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     logLine('info', 'center', `Received ${sig}; stopping child processes.`);
     try { if (appState.owned && appState.pid) spawnSync('taskkill.exe', ['/PID', String(appState.pid), '/T', '/F'], { windowsHide: true, timeout: 10000 }); } catch { /* ignore */ }
-    try { if (runningAgentJob?.child?.pid) spawnSync('taskkill.exe', ['/PID', String(runningAgentJob.child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000 }); } catch { /* ignore */ }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1500);
   });

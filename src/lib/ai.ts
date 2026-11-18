@@ -5,7 +5,7 @@ import type { ClinicalQuestion, ExamType, DifficultyTier, DifficultySubLevel } f
 import { lookupTopicsBalanced, howAskedFor, specialtyOf } from '../data/chapterTopics.ts';
 import { getMcqConcurrencyOverride } from './mcqConcurrency.ts';
 
-import { findLiveImage, liveImageCaption, isLiveImageSearchEnabled } from '../utils/liveImages.ts';
+import { findLiveImage, findPictureForQuestion, warmPictureSearch, liveImageCaption, isLiveImageSearchEnabled } from '../utils/liveImages.ts';
 import { DUPLICATE_SIMILARITY, stemSimilarity, toBenchItem } from './benchmark.ts';
 import { scopeInstruction } from './scopeRules.ts';
 import { pipelineFor, OPTION_RULES, EXPLANATION_RULES, jsonShape, optionReasoningProblem, explanationThin, parseOptionReasons, answerInStem, decorativeCase, oppositeOptions, sourceBoundExplanation, topicAllowsTreatment, isGeneralFact, isProgrammeFact, isDatedFact, scrubSourceMentions, STYLE_EXAMPLES, DIAGNOSIS_GUARD, type ExamPipeline, type Letter as OptionLetter } from './pipelines/index.ts';
@@ -182,9 +182,9 @@ function focusParts(subtopic: string): string[] {
   const after = subtopic.includes(':') ? subtopic.split(':').slice(1).join(':') : subtopic;
   return after.split(/,|&| and /).map((s) => s.trim()).filter(Boolean);
 }
-export type AiProviderId = 'gemini' | 'chatgpt' | 'claude' | 'grok' | 'opencode' | 'deeprelay';
+export type AiProviderId = 'gemini' | 'chatgpt' | 'claude' | 'grok' | 'deeprelay';
 
-export const AI_PROVIDER_IDS: AiProviderId[] = ['gemini', 'chatgpt', 'claude', 'grok', 'opencode', 'deeprelay'];
+export const AI_PROVIDER_IDS: AiProviderId[] = ['gemini', 'chatgpt', 'claude', 'grok', 'deeprelay'];
 
 // Server defaults (mirrored in server.ts); models are user-selectable and persisted
 // in localStorage as `ai.model.<provider>` and sent with every request.
@@ -193,23 +193,10 @@ export const DEFAULT_MODELS: Record<string, string> = {
   chatgpt: 'gpt-6.1-sol',
   claude: 'claude-sonnet-5-5',
   grok: 'grok-4.7',
-  // OpenCode Console / Go (https://opencode.ai/inference) — any model id the account has.
-  opencode: 'deepseek-v4.1-flash',
   // Custom OpenAI-compatible endpoint — user supplies URL, model id and key.
   custom: 'gpt-4o-mini',
   deeprelay: 'deeprelay/deepseek-v4.1-flash',
 };
-
-// Console-only model ids a previous version of the app offered for OpenCode. They are not
-// included in the Go plan and return "Model is unavailable" — drop them on read.
-const NON_GO_OPENCODE_MODELS = new Set([
- 'claude-sonnet-5-5',
- 'gpt-6.1-sol',
- 'gemini-3.8-flash',
- 'kimi-k3',
- 'claude-opus-4-5',
- 'gpt-5.4',
-]);
 
 export const NOT_CONNECTED_MESSAGE = 'Connect an AI provider in Settings → AI Subscription Hub.';
 
@@ -230,6 +217,13 @@ export class AiError extends Error {
 
 export function getActiveProvider(): AiProviderId | null {
   const stored = localStorage.getItem('ai.activeProvider');
+  if (stored === 'opencode') {
+    try {
+      localStorage.removeItem('ai.activeProvider');
+      localStorage.removeItem('ai.model.opencode');
+    } catch { /* ignore */ }
+    return null;
+  }
   // VyceAI was removed: a saved 'vyce' choice now means Deep Relay (DeepSeek).
   const value = stored === 'vyce' ? 'deeprelay' : stored;
   return value && (AI_PROVIDER_IDS as string[]).includes(value) ? (value as AiProviderId) : null;
@@ -256,12 +250,6 @@ export function setModel(provider: AiProviderId, model: string): void {
 
 export function getEffectiveModel(provider: AiProviderId): string {
   const stored = getModel(provider);
-  if (provider === 'opencode' && stored && NON_GO_OPENCODE_MODELS.has(stored)) {
-    // A previous version of the app listed Console-only model ids as if they were
-    // OpenCode Go models; those return "Model is unavailable" on a Go subscription.
-    try { localStorage.removeItem('ai.model.opencode'); } catch { /* ignore */ }
-    return DEFAULT_MODELS.opencode;
-  }
   return stored ?? DEFAULT_MODELS[provider];
 }
 
@@ -272,9 +260,9 @@ export function writeRoute(): { provider: AiProviderId; model: string } | null {
 }
 
 /** The provider and model fields for a question-writing request body. */
-export function workBody(): { provider: AiProviderId | 'opencode'; model?: string } {
+export function workBody(): { provider?: AiProviderId; model?: string } {
   const route = writeRoute();
-  return { provider: route?.provider ?? 'opencode', model: route?.model };
+  return route ? { provider: route.provider, model: route.model } : {};
 }
 
 /**
@@ -286,8 +274,6 @@ export function parallelRequestLimit(): number {
   if (override !== null) return override;
   // Mixed mode (Deep Relay / DeepSeek): 10 lanes, so 10 questions at once. The service refuses more concurrent streams than about 10.
   if (isMixedMode()) return 10;
-  // OpenCode runs 20 questions at a time. Other paid providers get 5, so each call costs what it must and no more.
-  if (getActiveProvider() === 'opencode') return 20;
   // Claude and the other paid models take 15 at once; the rewrite lane below still runs one rewrite at a time.
   if (getActiveProvider() === 'claude') return 15;
   return 5;
@@ -332,24 +318,6 @@ export interface AiCompleteOptions {
   purpose?: string;
   /** Cancels the HTTP request; the server also drops the upstream call (see /api/ai/complete). */
   signal?: AbortSignal;
-}
-
-// Stable conversation id for providers that cache/route per session (OpenCode Go).
-// Stored in sessionStorage so each tab/instance keeps its own session — running several
-// instances in parallel then maps to several distinct sessions on the provider gateway.
-function openCodeSessionId(): string {
-  try {
-    let id = sessionStorage.getItem('pulse.opencode.session');
-    if (!id) {
-      id = localStorage.getItem('pulse.opencode.session') ||
- `pulsemed-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-      sessionStorage.setItem('pulse.opencode.session', id);
-      try { localStorage.setItem('pulse.opencode.session', id); } catch { /* ignore */ }
-    }
-    return id;
-  } catch {
-    return `pulsemed-${Math.random().toString(36).slice(2)}`;
-  }
 }
 
 /** One planned question slot: the subject, subtopic, the part of it to focus on, and the difficulty. */
@@ -839,6 +807,62 @@ const REPAIRABLE_DROPS = new Set([
 ]);
 
 
+/**
+ * Guess check: one cheap call asks whether the answer can be found by wording alone (the stem names it, the options give
+ * it away). If so, ONLY the part that makes it easy is rewritten: the stem wording, or the distractors. The fact, the
+ * key and everything else stay. Anything that fails a check afterwards is undone, so the question is never made worse.
+ */
+async function easeFix(q: ClinicalQuestion, signal?: AbortSignal): Promise<'ok' | 'stem' | 'options' | 'kept'> {
+  const provider = getActiveProvider();
+  if (!provider || (q.examType !== 'NEET_PG' && q.examType !== 'INI_CET')) return 'ok';
+  const keyOpt = q.options.find((o) => o.id === q.correctOption);
+  if (!keyOpt) return 'ok';
+  const line = (q as { questionText?: string }).questionText ?? '';
+  const shape = q.options.map((o) => `{"id":"${o.id}","text":""}`).join(',');
+  const raw = await aiComplete({
+    system: 'You are a strict NEET-PG / INI-CET examiner. Decide whether the correct option can be picked by wording cues alone, without the medical knowledge the question is meant to test. Cues: the stem or question line states or paraphrases the answer; the other options come from a different category so only one makes sense; one option is the odd one out or clearly longer or more detailed; in a NOT/EXCEPT question the false statement contradicts another option and so stands out; absolute words only in the distractors. ' +
+      'Rate "sev": 0 fine, 1 mild cue, 2 easy guess, 3 answer practically given away. If sev is 2 or 3 name the ONE part to change: "stem" (the wording of the stem or question line gives it away) or "options" (the options give it away), and rewrite ONLY that part. ' +
+      'Rules for a rewrite: keep the same fact and the same correct answer; keep the key option text exactly as it is and at its own letter (do not move it); keep exactly ' + q.options.length + ' options with the same ids; a rewritten stem keeps every clinical finding the question needs but drops the words that hand over the answer; new distractors are real, plausible near-misses of the same kind as the key (same drug class, same organ, same type of statement), about the same length as the key, and each clearly wrong. ' +
+      'Reply with ONLY JSON: {"sev":0,"part":"none|stem|options","why":"","stem":"","questionText":"","options":[' + shape + ']}. Fill stem and questionText only when part is "stem"; fill options only when part is "options"; otherwise leave them empty.',
+    messages: [{ role: 'user', content: ['Stem: ' + (q.stem ?? ''), 'Question line: ' + (sameLine(q) ? '(same as the stem)' : line), ...q.options.map((o) => `${o.id}) ${o.text}`), 'Correct answer: ' + q.correctOption + ') ' + keyOpt.text].join('\n') }],
+    json: true,
+    effort: 'low',
+    purpose: 'ease-check',
+    provider,
+    model: cheapModel(provider),
+    signal,
+  }).catch(() => '');
+  const v = extractJson<{ sev?: number; part?: string; why?: string; stem?: string; questionText?: string; options?: { id: string; text: string }[] }>(raw);
+  if (!v || Number(v.sev) < 2 || (v.part !== 'stem' && v.part !== 'options')) return 'ok';
+  const before = { stem: q.stem, line: (q as { questionText?: string }).questionText, options: q.options.map((o) => ({ ...o })), explanation: q.explanation, optionReasons: (q as { optionReasons?: unknown }).optionReasons };
+  const undo = () => { q.stem = before.stem; (q as { questionText?: string }).questionText = before.line; q.options = before.options; q.explanation = before.explanation; (q as { optionReasons?: unknown }).optionReasons = before.optionReasons; };
+  if (v.part === 'stem') {
+    const ns = String(v.stem ?? '').trim();
+    if (ns.length < 15) return 'ok';
+    const wasSame = sameLine(q);
+    q.stem = ns;
+    const nl = String(v.questionText ?? '').trim();
+    if (nl) (q as { questionText?: string }).questionText = nl;
+    else if (wasSame) (q as { questionText?: string }).questionText = ns;
+  } else {
+    const no = v.options;
+    if (!Array.isArray(no) || no.length !== q.options.length) return 'ok';
+    const byId = new Map(no.map((o) => [String(o?.id), String(o?.text ?? '').trim()]));
+    const next = before.options.map((o) => ({ ...o, text: o.id === q.correctOption ? o.text : (byId.get(o.id) ?? '') }));
+    if (next.some((o) => o.text.length < 2)) return 'ok';
+    q.options = next;
+  }
+  // The rewrite must pass the same cheap local checks, or it is undone and the question is kept as it was.
+  if (answerInStem(q) || oppositeOptions(q) || hintReason(q) || sameOptionsText(q)) { undo(); return 'kept'; }
+  if (v.part === 'options') await repairExplanation(q, signal);
+  return v.part;
+}
+
+function sameOptionsText(q: ClinicalQuestion): boolean {
+  const t = q.options.map((o) => o.text.trim().toLowerCase());
+  return new Set(t).size !== t.length;
+}
+
 /** What the writer is told when a question was dropped by the hint check, so the rewrite does not repeat the clue. */
 const HINT_REASONS: Record<string, string> = {
  'hint-stem-words': 'the correct option repeated the words of the stem, which gives the answer away; reword the key so it does not echo the stem',
@@ -876,10 +900,11 @@ async function planFigure(q: ClinicalQuestion, topic: string, signal?: AbortSign
     system:
  'You decide whether one exam question should carry a real medical picture. It qualifies only if its answer is a finding or condition that has a typical, recognisable picture: an X-ray, CT, MRI, ultrasound, ECG, histology slide, blood smear, fundus photo or clinical photo. ' +
  'A question about a drug effect, a mechanism, a number or a management step does not qualify. The picture must not give the answer away. ' +
- 'Reply with ONLY JSON: {"modality":"ECG | X-ray | CT | MRI | ultrasound | histology | smear | fundus | clinical photo","query":"3-6 English words: the finding or diagnosis plus the modality"}, or {"modality":"","query":""} if it does not qualify.',
+ 'The query is typed into an image search that matches every word, so use the plain textbook name of the diagnosis that a picture caption would use (for example "lobar pneumonia chest X-ray", "Colles fracture X-ray", "membranous nephropathy histology"), never a rare variant, a list of findings or a long phrase. ' +
+ 'Reply with ONLY JSON: {"modality":"ECG | X-ray | CT | MRI | ultrasound | histology | smear | fundus | clinical photo","query":"2-4 English words: the diagnosis plus the modality"}, or {"modality":"","query":""} if it does not qualify.',
     messages: [{ role: 'user', content: `Topic: ${topic}\n${q.stem} ${q.questionText}\nAnswer: ${answer}` }],
     json: true,
-    effort: 'low',
+    effort: 'medium',
     purpose: 'picture-plan',
     provider,
     model: cheapModel(provider),
@@ -1073,7 +1098,7 @@ function currentRoute(provider: AiProviderId): { provider: AiProviderId; model: 
  * kind of response /api/ai/complete would, so the caller reads it the same way.
  */
 async function runCompletionJob(body: unknown, signal?: AbortSignal): Promise<Response> {
-  const headers = { 'Content-Type': 'application/json', 'x-opencode-session': openCodeSessionId() };
+  const headers = { 'Content-Type': 'application/json' };
   const start = await fetch('/api/ai/jobs', { method: 'POST', headers, body: JSON.stringify(body), signal });
   if (!start.ok) return start;
   const { id } = await start.json();
@@ -1123,7 +1148,7 @@ async function completeOn(provider: AiProviderId, model: string, options: AiComp
       ? await runCompletionJob(body, options.signal)
       : await fetch('/api/ai/complete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-opencode-session': openCodeSessionId() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
           signal: options.signal,
         });
@@ -1628,6 +1653,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
   const liveImages = includeImages && isLiveImageSearchEnabled();
   let attachedImages = 0;
   const usedImages = new Set<string>();
+  // Facts whose picture search failed once: they are not searched again, and their question is written without a picture.
+  const noPictureFor = new Set<string>();
   let figuresPlanned = 0;
 
   const tier: 'LOW' | 'MEDIUM' | 'HIGH' = difficultyTier === 'ALL' ? 'MEDIUM' : difficultyTier;
@@ -1793,6 +1820,13 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
   const plannedTopics = plannedFacts.length
     ? plannedFacts.map((f, i) => ({ subject: (specialities?.length ? subjectSubtopics.find((e) => e.subtopics.includes(f.subtopic))?.subject : undefined) ?? specialtyOf(f.subtopic, f.fact) ?? requestedTopic ?? '', subtopic: f.subtopic, focus: f.fact, difficultyTier: slots[i].tier, assigned: f, slot: slots[i] }))
     : requestedTopic ? null : await planTopics(count);
+
+  // Picture questions go first: their picture search and check take the longest, so they start while the lanes that come
+  // after them write the plain questions. The order is stable inside each group. (The final set is shuffled anyway.)
+  if (plannedTopics) {
+    const picturefirst = (t: { slot?: Slot; assigned?: AssignedFact }) => (t.slot?.style === 'image' || t.assigned?.picturable === true ? 0 : 1);
+    plannedTopics.sort((x, y) => picturefirst(x) - picturefirst(y));
+  }
 
   // Build the subject/subtopic pool as fallback.
   const pool: { subject: string; subtopic: string }[] = [];
@@ -1975,6 +2009,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
             if (cut.split(/\s+/).length >= 6) q.stem = cut;
           }
         }
+        // The picture search starts now, while the checks below still run: it only needs the picture words.
+        if (q.figureQuery && includeImages && liveImages) warmPictureSearch(q.figureQuery);
         // A sentence written twice in a row is a writer slip: keep it once.
         q.stem = (q.stem ?? '').replace(/(^|\s)([^.!?]{25,}[.!?])\s+\2(?=\s|$)/g, '$1$2').trim();
         // A match item's stem is the two lists only: any scene before "Match List I" is cut.
@@ -2112,6 +2148,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         if (styleIssue) { if (ctx) ctx.reason = styleIssue; dropQ(ctx, `style-${styleIssue.split(':')[0]}`); return null; }
         const hint = hintReason(q);
         if (hint) { if (ctx) ctx.reason = HINT_REASONS[hint] ?? hint; dropQ(ctx, `${hint}`); return null; }
+        // Too easy by wording alone: only the part that gives it away is rewritten (the stem wording or the options).
+        if (pipe && !codedOptions && slot?.style !== 'image' && slot?.style !== 'match') { const eased = await easeFix(q, signal); if (eased === 'stem' || eased === 'options') logStage(`ease-fix:${eased}`, 0); }
 
         // The first copy to pass the structure checks claims the question. The claim is then checked against the
         // sources once, so the checker runs once per question, not once per copy. A rejected claim releases the question.
@@ -2198,16 +2236,27 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
 
         // Pictures. An image-style slot always asks for one; other slots only when the fact has a typical picture, for at
         // most about one question in four. Without a slot (a plain subject run) the earlier rule applies.
-        const wantsPicture = Boolean(includeImages && liveImages) && (
-          slot ? (slot.style === 'image' || (assigned?.picturable === true && figuresPlanned < Math.ceil((acceptedStems.length + 1) / 4)))
-            : (!q.figureQuery && figuresPlanned < Math.ceil((acceptedStems.length + 1) / 4)));
+        const pictureKey = (assigned?.fact ?? focus ?? topic.subtopic ?? '').toLowerCase();
+        if (noPictureFor.has(pictureKey)) { q.figureQuery = undefined; q.figureModality = undefined; }
+        const wantsPicture = Boolean(includeImages && liveImages) && !noPictureFor.has(pictureKey) && (
+          slot ? (slot.style === 'image' || (assigned?.picturable === true && figuresPlanned < Math.ceil(count / 4)))
+            : (!q.figureQuery && figuresPlanned < Math.ceil(count / 4)));
         if (wantsPicture && !q.figureQuery) {
           await planFigure(q, requestedTopic ?? topic.subject, signal);
           if (q.figureQuery) figuresPlanned += 1;
         }
         let attachedHere: string | null = null;
         if (includeImages && liveImages && q.figureQuery) {
-          const live = await findLiveImage(q.figureQuery, usedImages);
+          // The picture is searched and checked against the written question as soon as the question is accepted, while the
+          // other lanes keep writing. A doubtful first picture gets one second search; no good picture after that means a
+          // picture-style question is dropped (a question that only has an optional picture stays text-only).
+          const live = await findPictureForQuestion(q, usedImages);
+          if (!live && slot?.style === 'image') {
+            if (ctx) ctx.reason = 'no picture that fits this question was found after two searches; write a different picture question';
+            noPictureFor.add(pictureKey);
+            dropQ(ctx, 'no-fitting-picture');
+            return null;
+          }
           if (live && !usedImages.has(live.id)) {
             usedImages.add(live.id);
             attachedHere = live.id;
@@ -2217,6 +2266,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
             q.imageId = live.id;
             q.imageLicence = live.licence;
             q.imageLicenceUrl = live.licenceUrl;
+            q.imageCredit = live.credit;
             q.imageGroundTruth = q.figureQuery;
             q.imageVerified = live.verified === true;
             q.imageVerifyReason = live.verifyReason;
@@ -2341,7 +2391,11 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
       if (questionsInProgress >= GENERATION_CONCURRENCY) { await new Promise((r) => setTimeout(r, 300)); continue; }
       // A rewrite goes back into the queue only after its own attempt has finished, so one question is never written twice
       // at once; rewrites of different questions run in parallel with the other lanes.
-      if (!pending && questions.length + questionsInProgress >= count) { await new Promise((r) => setTimeout(r, 300)); continue; }
+      // The last missing questions are hedged: while questions are still needed, spare lanes start up to as many backup
+      // questions (other facts) as are missing. The first to be accepted fills the slot and the rest are discarded as
+      // 'over-target'. Without this the set stalled one short (9 of 10, 19 of 20) while one slow question was rewritten alone.
+      const missing = count - questions.length;
+      if (!pending && questionsInProgress >= missing * 2) { await new Promise((r) => setTimeout(r, 300)); continue; }
       const next: QueueItem = pending ?? queue.shift()!;
       pending = null;
       const { topic, idx, retries, hint, slot: slotOverride, repaired, verifyErrors = 0, repairedFor } = next;
@@ -2362,6 +2416,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         : `${pipe ? pipe.itemShape(idx) : requestedTopic ? typedShape(idx) : itemShape(idx, exam)}${pipe && hint ? ` Your previous attempt was rejected because: ${hint}. Fix exactly that.` : ''}`;
       const q = await generateSingleQuestion(topic, 0, focus, shapeText, ctx, slotOverride, repaired).finally(() => { questionsInProgress -= 1; });
       completedCount += 1;
+      // The breaker counts failures in a row, so any accepted question starts the count again.
+      if (q) providerErrorStreak = 0;
       // Circuit breaker: when the provider is down every slot fails, and a run that keeps refilling its queue would
       // send thousands of calls. A long unbroken streak of failures ends the run with a message instead.
       if (providerErrorStreak >= MAX_NULL_STREAK && questions.length < count && !stopped) {
@@ -2397,7 +2453,9 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         const styleFallback = slot && !styleExplicit && retries + 1 >= MAX_TOPIC_RETRIES && !plain.includes(slot.style) ? { ...slot, style: fallbackStyle } : slotOverride;
         // A planned lead-in the fact does not fit ("treatment of choice" for a toxin fact) is dropped on the rewrite, unless
         // the learner chose that lead-in.
-        const nextSlot = ctx.dropKey === 'style-wrong-lead-in' && slot?.leadIn && !leadInExplicit ? { ...(styleFallback ?? slot), leadIn: undefined } : styleFallback;
+        const afterLeadIn = ctx.dropKey === 'style-wrong-lead-in' && slot?.leadIn && !leadInExplicit ? { ...(styleFallback ?? slot), leadIn: undefined } : styleFallback;
+        // No picture fits this fact: the replacement question is a text question, not another picture question.
+        const nextSlot = ctx.dropKey === 'no-fitting-picture' && slot && !styleExplicit ? { ...(afterLeadIn ?? slot), style: fallbackStyle } : afterLeadIn;
         // A rejected question goes to the front of the queue: the next free lane regenerates it before any fresh question.
         // The repair starts at the moment the defect is found, in this lane: it is not put behind the queue.
         // Up to two repairs per topic: a second repair, told the new problem, still keeps the fact and is cheaper than a rewrite.
@@ -2444,7 +2502,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
       if (q.image) continue; // already has an image
       if (!q.figureQuery) continue; // not an image-based item — leave it text-only
 
-      const live = await findLiveImage(q.figureQuery, usedImages);
+      const live = await findPictureForQuestion(q, usedImages);
       if (live && !usedImages.has(live.id)) {
         usedImages.add(live.id);
         q.image = live.proxyUrl;
@@ -2452,6 +2510,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         q.imageCaption = liveImageCaption(live);
         q.imageId = live.id;
         q.imageLicence = live.licence;
+        q.imageLicenceUrl = live.licenceUrl;
+        q.imageCredit = live.credit;
         q.imageGroundTruth = q.figureQuery;
         q.imageVerified = live.verified === true;
         q.imageVerifyReason = live.verifyReason;

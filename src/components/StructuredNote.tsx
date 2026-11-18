@@ -360,9 +360,9 @@ export const StructuredNote: React.FC<{
   const hasMarks = JSON.stringify(note).includes('†');
   return (
     <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-md dark:border-slate-700 dark:bg-slate-900">
-      <header className="relative overflow-hidden bg-gradient-to-br from-[#0d3b3e] via-[#0f6b6d] to-[#14a8a3] px-5 py-5 text-white">
-        <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/10" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-14 right-16 h-28 w-28 rounded-full bg-white/10" />
+      <header className="relative overflow-hidden bg-gradient-to-br from-[#0d3b3e] via-[#0f6b6d] to-[#14a8a3] px-5 py-5 text-white max-md:bg-[#0f6b6d] max-md:px-3 max-md:py-3 max-md:dark:bg-[#0d4f52]">
+        <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/10 max-md:hidden" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-14 right-16 h-28 w-28 rounded-full bg-white/10 max-md:hidden" />
         <div className="relative flex items-center justify-between gap-2">
           <p className="rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-teal-50">{range}</p>
           {onDelete && (
@@ -372,12 +372,12 @@ export const StructuredNote: React.FC<{
           )}
         </div>
         <h3 className="relative mt-2 text-[22px] font-semibold leading-tight tracking-tight">{note.title || 'Notes'}</h3>
-        {note.takeaway && (
-          <div className="relative mt-3 flex gap-2.5 rounded-2xl bg-white/15 p-3 backdrop-blur-sm">
+        {!!note.takeaway && !!note.takeaway.replace(/\*\*/g, '').trim() && (
+          <div className="relative mt-3 flex gap-2.5 rounded-2xl bg-white/15 p-3 backdrop-blur-sm max-md:rounded-xl max-md:p-3!">
             <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" />
             <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-amber-100">The big idea</div>
-              <p className="mt-0.5 text-[14px] leading-6 text-white">{note.takeaway.replace(/\*\*/g, '')}</p>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-amber-100 max-md:text-[11px]!">The big idea</div>
+              <p className="mt-0.5 text-[14px] leading-6 text-white max-md:text-[15px]! max-md:leading-[1.55]">{note.takeaway.replace(/\*\*/g, '')}</p>
             </div>
           </div>
         )}

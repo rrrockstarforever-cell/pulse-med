@@ -1,7 +1,7 @@
 // Subscription logins (device-code OAuth) for ChatGPT/Codex and xAI Grok, same pattern Hermes uses.
 // Runs server-side because these endpoints don't allow browser (CORS) calls. Tokens live in
 // ~/.neet-pg-prep/oauth.json (mode 600) and never reach the web page.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, appendFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -75,7 +75,11 @@ async function claudeToken(body) {
 const load = () => (existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {});
 function save(d) {
   mkdirSync(DIR, { recursive: true });
-  writeFileSync(FILE, JSON.stringify(d, null, 2));
+  // Written to a temporary file with owner-only permissions, then moved over the real one, so a crash
+  // can never leave a half-written token file.
+  const tmp = FILE + '.tmp';
+  writeFileSync(tmp, JSON.stringify(d, null, 2), { mode: 0o600 });
+  renameSync(tmp, FILE);
   try { chmodSync(FILE, 0o600); } catch {}
 }
 const pending = new Map(); // login id -> { provider, ... , status, error }
@@ -278,8 +282,23 @@ export async function listModels(provider) {
 }
 
 // ---------- chat ----------
-export async function chat({ provider, model, system, messages, json, effort, search, signal, _retried = false }) {
+/** Splits "data:image/png;base64,AAAA" into its media type and base64 body; null when it is not a data URL. */
+function splitDataUrl(url) {
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(String(url || ''));
+  return m ? { type: m[1], data: m[2] } : null;
+}
+
+// images: data URLs attached to the LAST user message, so a vision-capable model can look at them.
+export async function chat({ provider, model, system, messages: plainMessages, json, effort, search, signal, images, _retried = false }) {
   const tok = await token(provider);
+  const pictures = (Array.isArray(images) ? images : []).map(splitDataUrl).filter(Boolean);
+  const lastUser = (() => { for (let i = plainMessages.length - 1; i >= 0; i--) if (plainMessages[i].role === 'user') return i; return -1; })();
+  // Each provider writes a picture differently; every other message keeps its plain text.
+  const messages = pictures.length && lastUser >= 0 && provider === 'claude'
+    ? plainMessages.map((m, i) => i !== lastUser ? m : { role: m.role, content: [...pictures.map((p) => ({ type: 'image', source: { type: 'base64', media_type: p.type, data: p.data } })), { type: 'text', text: m.content }] })
+    : pictures.length && lastUser >= 0 && provider === 'xai'
+      ? plainMessages.map((m, i) => i !== lastUser ? m : { role: m.role, content: [{ type: 'text', text: m.content }, ...pictures.map((p) => ({ type: 'image_url', image_url: { url: `data:${p.type};base64,${p.data}` } }))] })
+      : plainMessages;
   if (provider === 'claude') {
     // Anthropic rejects an empty text block ("system: text content blocks must be
     // non-empty"), so only append the caller's system prompt when there is one. The
@@ -407,7 +426,7 @@ export async function chat({ provider, model, system, messages, json, effort, se
     body: JSON.stringify({
       model, instructions: system, store: false, stream: true,
       // OpenAI's JSON mode refuses a request unless the word "json" appears in the input messages (the instructions do not count).
-      input: messages.map((m, i) => ({ role: m.role, content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: json && i === messages.length - 1 && !messages.some((x) => /json/i.test(x.content)) ? `${m.content}\n\n(Reply as JSON.)` : m.content }] })),
+      input: messages.map((m, i) => ({ role: m.role, content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: json && i === messages.length - 1 && !messages.some((x) => /json/i.test(x.content)) ? `${m.content}\n\n(Reply as JSON.)` : m.content }, ...(i === lastUser ? pictures.map((p) => ({ type: 'input_image', image_url: `data:${p.type};base64,${p.data}` })) : [])] })),
       ...(json ? { text: { format: { type: 'json_object' } } } : {}),
       ...(/^(gpt-5|o\d)/i.test(model || '') ? { reasoning: { effort: { min: 'low', low: 'low', medium: 'medium', high: 'high', extra: 'high', ultra: 'high' }[effort || 'medium'] || 'medium' } } : {}),
     }),
@@ -424,7 +443,7 @@ export async function chat({ provider, model, system, messages, json, effort, se
       const pick = (listed.models || []).find((m) => m.id && m.id !== model);
       if (pick) {
         aiLog({ provider: 'codex', model, status: r.status, retry_with: pick.id });
-        return chat({ provider, model: pick.id, system, messages, json, effort, search, signal, _retried: true });
+        return chat({ provider, model: pick.id, system, messages: plainMessages, json, effort, search, signal, images, _retried: true });
       }
     }
     // A ChatGPT subscription that does not include Codex models answers 400 for every

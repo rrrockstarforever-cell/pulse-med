@@ -4,9 +4,13 @@ import { passageMatchesQuery } from './src/lib/pipelines/shared.ts';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import net from 'net';
 import dotenv from 'dotenv';
+
+// Some networks list IPv6 addresses that never answer (seen with openi.nlm.nih.gov). Node tries each address for only
+// 250 ms by default and then gives up, so a site that works fine in a browser failed with ETIMEDOUT. Wait longer per address.
+try { (net as any).setDefaultAutoSelectFamilyAttemptTimeout?.(3000); } catch { /* older Node: keep the default */ }
 import { GoogleGenAI } from '@google/genai';
 import {
   startLogin,
@@ -37,18 +41,200 @@ import { extractJson } from './src/lib/ai.ts';
 
 dotenv.config();
 
+import crypto from 'crypto';
+import { networkInterfaces } from 'os';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// Only this computer may talk to the server. The server holds the user's AI keys, so it must never answer a request
-// addressed to another host name. Browsers send the Host header as the name they used (localhost, 127.0.0.1 or [::1]),
-// so requests for any other name (including a web page reaching the server through DNS rebinding) are refused.
+const REMOTE_PIN = process.env.PULSE_REMOTE_PIN || '';
+const PHONE_MODE = REMOTE_PIN.length >= 4;
+const PIN_COOKIE_NAME = 'pulse_remote_pin';
+const PIN_COOKIE_VALUE = PHONE_MODE
+  ? crypto.createHash('sha256').update(`pulse-med-phone-pin:${REMOTE_PIN}`).digest('hex')
+  : '';
+const pinAttempts = new Map<string, { wrong: number; lockedUntil: number }>();
+
+function escapeHtml(value: string): string {
+  const replacements: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return value.replace(/[&<>"']/g, (ch) => replacements[ch] || ch);
+}
+
+function pinPage(message = ''): string {
+  const error = message ? `<p class="err">${escapeHtml(message)}</p>` : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse Med</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;padding:20px}
+  main{width:100%;max-width:360px;background:#111827;border:1px solid #334155;border-radius:18px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  h1{font-size:1.35rem;margin:0 0 8px}
+  p{line-height:1.45;color:#94a3b8;margin:0 0 18px}
+  label{display:block;font-size:.8rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;margin-bottom:8px}
+  input{width:100%;border:1px solid #475569;border-radius:12px;background:#020617;color:#f8fafc;font-size:1.25rem;letter-spacing:.2em;padding:14px;outline:none}
+  input:focus{border-color:#38bdf8;box-shadow:0 0 0 3px rgba(56,189,248,.2)}
+  button{width:100%;margin-top:14px;border:0;border-radius:12px;background:#38bdf8;color:#082f49;font-size:1rem;font-weight:800;padding:14px;cursor:pointer}
+  .err{background:#7f1d1d;color:#fecaca;border-radius:10px;padding:10px 12px;font-size:.9rem;margin:0 0 14px}
+</style>
+</head>
+<body>
+<main>
+<h1>Pulse Med</h1>
+<p>Enter the PIN from the computer running Pulse Med to use this phone.</p>
+${error}
+<form method="POST" action="/__pin">
+<label for="pin">PIN</label>
+<input id="pin" name="pin" type="password" minlength="4" autocomplete="current-password" required autofocus>
+<button type="submit">Unlock</button>
+</form>
+</main>
+</body>
+</html>`;
+}
+
+function readCookie(req: Request, name: string): string {
+  const header = req.headers.cookie;
+  if (!header) return '';
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const ah = crypto.createHash('sha256').update(a).digest();
+  const bh = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ah, bh);
+}
+
+function isLoopbackRequest(req: Request): boolean {
+  const address = String(req.socket.remoteAddress || '');
+  return address === '127.0.0.1'
+    || address === '::1'
+    || address === '::ffff:127.0.0.1'
+    || address.startsWith('127.')
+    || address.startsWith('::ffff:127.');
+}
+
+function clientAddress(req: Request): string {
+  return String(req.socket.remoteAddress || 'unknown');
+}
+
+function isApiPath(pathname: string): boolean {
+  return pathname === '/api' || pathname.startsWith('/api/');
+}
+
+function readFormBody(req: Request, limit = 8192): Promise<URLSearchParams> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let bytes = 0;
+    let tooLarge = false;
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => {
+      if (tooLarge) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > limit) {
+        tooLarge = true;
+        data = '';
+        return;
+      }
+      data += chunk;
+    });
+    req.on('end', () => {
+      if (tooLarge) return reject(new Error('body too large'));
+      resolve(new URLSearchParams(data));
+    });
+    req.on('error', reject);
+  });
+}
+
+function lanIPv4Addresses(): string[] {
+  const addresses = new Set<string>();
+  for (const list of Object.values(networkInterfaces())) {
+    for (const info of list || []) {
+      if (String(info.family) === 'IPv4' && !info.internal) addresses.add(info.address);
+    }
+  }
+  return Array.from(addresses);
+}
+
+// Parse the form-encoded PIN POST before the Host guard. All other request bodies are left untouched for the
+// existing JSON/multipart parsers below.
+app.use((req: Request, res: Response, next: () => void) => {
+  if (!PHONE_MODE || req.method !== 'POST' || req.path !== '/__pin') return next();
+
+  const ip = clientAddress(req);
+  const now = Date.now();
+  const existing = pinAttempts.get(ip);
+  if (existing && existing.lockedUntil > now) {
+    req.resume();
+    const retryAfter = Math.max(1, Math.ceil((existing.lockedUntil - now) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).type('html').send(pinPage(`Too many attempts. Try again in ${retryAfter} second${retryAfter === 1 ? '' : 's'}.`));
+    return;
+  }
+  if (existing && existing.lockedUntil <= now) pinAttempts.delete(ip);
+
+  readFormBody(req).then((body) => {
+    const submittedPin = body.get('pin') || '';
+    if (constantTimeEqual(submittedPin, REMOTE_PIN)) {
+      pinAttempts.delete(ip);
+      res.setHeader('Set-Cookie', `${PIN_COOKIE_NAME}=${PIN_COOKIE_VALUE}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax`);
+      res.redirect(303, '/');
+      return;
+    }
+
+    const entry = pinAttempts.get(ip) || { wrong: 0, lockedUntil: 0 };
+    entry.wrong += 1;
+    if (entry.wrong >= 5) {
+      entry.wrong = 0;
+      entry.lockedUntil = Date.now() + 60_000;
+      pinAttempts.set(ip, entry);
+      res.status(429).type('html').send(pinPage('Too many attempts. Try again in 60 seconds.'));
+      return;
+    }
+    pinAttempts.set(ip, entry);
+    res.status(401).type('html').send(pinPage('Wrong PIN. Try again.'));
+  }).catch(() => {
+    res.status(400).type('html').send(pinPage('Could not read the PIN. Try again.'));
+  });
+});
+
+// Only this computer may talk to the server by default. In phone mode, a non-local Host is allowed only after a
+// valid PIN cookie (or when the request itself comes from loopback), so the AI keys stay behind the PIN gate.
 app.use((req: Request, res: Response, next: () => void) => {
   const host = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return next();
-  res.status(403).json({ error: 'This server only accepts requests from this computer.' });
+  if (!PHONE_MODE) {
+    res.status(403).json({ error: 'This server only accepts requests from this computer.' });
+    return;
+  }
+  if (isLoopbackRequest(req)) return next();
+  if (constantTimeEqual(readCookie(req, PIN_COOKIE_NAME), PIN_COOKIE_VALUE)) return next();
+  if (isApiPath(req.path)) {
+    res.status(401).json({ error: 'PIN required.' });
+    return;
+  }
+  res.status(401).type('html').send(pinPage());
 });
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -68,15 +254,11 @@ app.use(express.json({ limit: '50mb' })); // raised for the sync-folder push (lo
 // PROVIDER CONFIG (real providers only)
 // ==========================================
 
-// OpenCode's default model id (Console / Go gateway).
-const OPENCODE_DEFAULT_MODEL = 'deepseek-v4.1-flash';
-
 const DEFAULT_MODELS: Record<string, string> = {
   gemini: 'gemini-3.8-flash',
   chatgpt: 'gpt-6.1-sol',
   claude: 'claude-sonnet-5-5',
   grok: 'grok-4.7',
-  opencode: OPENCODE_DEFAULT_MODEL,
   custom: 'gpt-4o-mini',
   deeprelay: 'deeprelay/deepseek-v4.1-flash',
 };
@@ -144,67 +326,6 @@ function saveGeminiKey(key: string): void {
   writeEnvValue('GEMINI_API_KEY', key);
 }
 
-// ==========================================
-// OPENCODE (Console / Go inference gateway)
-// ==========================================
-// OpenCode exposes an OpenAI-compatible gateway at https://opencode.ai/inference. Two ways
-// to authenticate, checked in this order:
-//   1. OPENCODE_API_KEY saved from Settings (stored in <PULSE_DATA_DIR>/.env).
-//   2. The key already present in the OpenCode CLI's own auth file, so a signed-in
-//      OpenCode install works with no extra paste.
-const OPENCODE_CHAT_URL = 'https://opencode.ai/inference/openai/v1/chat/completions';
-const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/inference/go/openai/v1/chat/completions';
-const OPENCODE_SESSION = `pulsemed-${Math.random().toString(36).slice(2)}`;
-const OPENCODE_MODELS_URL = 'https://opencode.ai/inference/v1/models';
-const OPENCODE_GO_MODELS_URL = 'https://opencode.ai/inference/go/v1/models';
-
-function opencodeAuthFile(): string {
-  return process.env.OPENCODE_AUTH_FILE || path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
-}
-
-function opencodeKeyFromCli(): string {
-  try {
-    const raw = JSON.parse(fs.readFileSync(opencodeAuthFile(), 'utf8'));
-    const entry = raw?.opencode ?? raw?.['opencode-go'] ?? raw?.['opencode-zen'];
-    const key = entry?.key ?? entry?.apiKey ?? entry?.access;
-    return typeof key === 'string' ? key.trim() : '';
-  } catch {
-    return '';
-  }
-}
-
-// The OpenCode desktop install ships its own CLI. `auth export` lists the credentials it stores,
-// including the device sign-in for the OpenCode Console account, which is what "Sign in" gives.
-let signInCache: { key: string; at: number } | null = null;
-function opencodeKeyFromSignIn(): string {
-  if (signInCache && Date.now() - signInCache.at < 5 * 60_000) return signInCache.key;
-  const cli = process.env.OPENCODE_CLI_PATH
-    || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ai.opencode.desktop', 'resources', 'opencode-cli.exe');
-  let key = '';
-  try {
-    const list = JSON.parse(execFileSync(cli, ['auth', 'export'], { encoding: 'utf8', timeout: 15_000, windowsHide: true }));
-    // Either account's sign-in works: the OpenCode Console login or the OpenCode Go login.
-    const signedIn = (id: string) => list.find((c: any) => c?.integrationID === id && c?.active && c?.value?.type === 'oauth');
-    const fresh = (c: any) => typeof c?.value?.expires === 'number' && c.value.expires > Date.now() && typeof c?.value?.access === 'string';
-    const oauth = [signedIn('opencode-go'), signedIn('opencode')].find(fresh);
-    const goKey = list.find((c: any) => c?.integrationID === 'opencode-go' && c?.active && c?.value?.type === 'key');
-    key = oauth ? oauth.value.access : goKey?.value?.key ?? '';
-  } catch {
-    key = '';
-  }
-  signInCache = { key, at: Date.now() };
-  return key;
-}
-
-function opencodeKey(): string {
-  return (opencodeKeyFromSignIn() || process.env.OPENCODE_API_KEY || opencodeKeyFromCli()).trim();
-}
-
-/** Save/replace the OpenCode Console API key (never echoed back to the browser). */
-function saveOpenCodeKey(key: string): void {
-  writeEnvValue('OPENCODE_API_KEY', key);
-}
-
 function providerErrorText(body: any, status: number): string {
   const e = body?.error;
   if (typeof e === 'string' && e.trim()) return e;
@@ -215,7 +336,6 @@ function providerErrorText(body: any, status: number): string {
 
 function isProviderConnected(providerId: string): boolean {
   if (providerId === 'gemini') return Boolean(geminiKey());
-  if (providerId === 'opencode') return Boolean(opencodeKey());
   if (providerId === 'deeprelay') return Boolean(deepRelayKey());
   if (providerId === 'deeprelay') return Boolean(deepRelayKey());
   if (providerId === 'custom') return Boolean(getActiveCustomEndpoint());
@@ -232,9 +352,6 @@ function notConnectedMessage(providerId: string): string {
   if (providerId === 'gemini') {
     return 'Gemini is not connected. Add your Gemini API key in Settings → AI Subscription Hub.';
   }
-  if (providerId === 'opencode') {
-    return 'OpenCode is not connected. Paste your OpenCode Console API key in Settings → AI Subscription Hub.';
-  }
   if (providerId === 'deeprelay') return 'Deep Relay is not connected. Paste your Deep Relay API key in Settings → AI Subscription Hub.';
   if (providerId === 'custom') {
     return 'Custom provider is not connected. Add a custom endpoint in Settings → AI Subscription Hub.';
@@ -244,6 +361,18 @@ function notConnectedMessage(providerId: string): string {
 
 
 function recordTokenUsage(_purpose: string | undefined, _body: any): void {
+}
+
+// OpenAI-style chat messages; pictures (data URLs) go on the last user message as image_url parts.
+function openAiMessages(messages: OAuthChatMessage[], images?: string[]): { role: string; content: any }[] {
+  const plain = messages.map((m) => ({ role: m.role, content: m.content as any }));
+  if (!images?.length) return plain;
+  for (let i = plain.length - 1; i >= 0; i--) {
+    if (plain[i].role !== 'user') continue;
+    plain[i] = { role: 'user', content: [{ type: 'text', text: String(plain[i].content) }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] };
+    break;
+  }
+  return plain;
 }
 
 // Shared completion dispatcher used by /api/ai/complete and /api/ai/tutor-chat.
@@ -256,85 +385,26 @@ async function runCompletion(opts: {
   effort?: string;
   search?: boolean;
   signal?: AbortSignal;
-  /** Stable conversation id for providers that route/cache per session (OpenCode Go). */
-  session?: string;
   images?: string[];
   /** Who asked for this call (write, check-solve, check-judge): shown in the server log. */
   purpose?: string;
 }): Promise<string> {
   const { provider, model, system, messages, json, effort, search, signal, images } = opts;
 
-  if (provider === 'opencode') {
-    const key = opencodeKey();
-    if (!key) throw new ApiError(notConnectedMessage('opencode'), 401);
-    const model_ = model || DEFAULT_MODELS.opencode;
-    const payloadMessages = [
-      ...(system ? [{ role: 'system', content: system }] : []),
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-    ];
-    const payload = JSON.stringify({
-      model: model_,
-      messages: payloadMessages,
-      temperature: 0.7,
-      ...(json ? { response_format: { type: 'json_object' } } : {}),
-    });
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-      // OpenCode Go asks clients to identify themselves and keep a stable session id,
-      // which also lets their gateway cache the prompt across batches.
-      'User-Agent': 'PulseMed/1.0.7 (desktop study app)',
-      'x-opencode-session': opts.session || OPENCODE_SESSION,
-    };
-    // Go subscriptions are served under /inference/go/..., Console pay-as-you-go keys
-    // under /inference/... . Try Go first and fall back when this key has no Go allowance.
-    const attempt = (url: string) =>
-      fetch(url, { method: 'POST', headers, body: payload, ...(signal ? { signal } : {}) });
-    const readBody = async (response: Response | any) => {
-      const raw = await response.text();
-      try { return raw ? JSON.parse(raw) : {}; } catch { return {}; }
-    };
-
-    let r = await attempt(OPENCODE_GO_CHAT_URL);
-    let body: any = await readBody(r);
-    if (!r.ok) {
-      const reason = providerErrorText(body, r.status);
-      const retryOnConsole = r.status === 402 || r.status === 403 || r.status === 404 ||
-        /credit|balance|quota|no access|not entitled|not available|unknown model|forbidden/i.test(reason);
-      if (retryOnConsole) {
-        r = await attempt(OPENCODE_CHAT_URL);
-        body = await readBody(r);
-      }
-    }
-    if (!r.ok) {
-      aiLog({ provider: 'opencode', model: model_, status: r.status, error: true });
-      const reason = providerErrorText(body, r.status);
-      const hint = /credit|balance|quota/i.test(reason)
-        ? ' — this key has no Console credits. Use an OpenCode Go subscription with a Go-included model (deepseek-v4.1-flash, grok-4.7, glm-5.3-flash …), or enable Extra Usage in the OpenCode console.'
-        : '';
-      throw new ApiError(`OpenCode: ${reason}${hint}`, r.status === 401 || r.status === 403 ? 401 : 502);
-    }
-    const choice = body?.choices?.[0];
-    const content = choice?.message?.content;
-    const text = Array.isArray(content)
-      ? content.map((part: any) => (typeof part === 'string' ? part : part?.text || '')).join('')
-      : typeof content === 'string'
-        ? content
-        : '';
-    aiLog({ provider: 'opencode', model: model_, status: r.status, finish: choice?.finish_reason, text_len: text.length, json: !!json });
-    if (!text.trim()) {
-      throw new ApiError(`OpenCode returned no text (finishReason: ${choice?.finish_reason || 'unknown'}).`, 502);
-    }
-    return text;
-  }
-
   if (provider === 'gemini') {
     const ai = getGemini();
     if (!ai) throw new ApiError(notConnectedMessage('gemini'), 401);
     const model_ = model || DEFAULT_MODELS.gemini;
-    const contents = messages.map((m) => ({
+    const lastUserAt = messages.map((m) => m.role).lastIndexOf('user');
+    const contents = messages.map((m, i) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
+      parts: [
+        { text: m.content } as any,
+        ...(i === lastUserAt ? (images || []).flatMap((url) => {
+          const hit = /^data:([^;,]+);base64,(.+)$/s.exec(url);
+          return hit ? [{ inlineData: { mimeType: hit[1], data: hit[2] } }] : [];
+        }) : []),
+      ],
     }));
     const response = await ai.models.generateContent({
       model: model_,
@@ -451,7 +521,7 @@ async function runCompletion(opts: {
     const key = deepRelayKey();
     if (!key) throw new ApiError(notConnectedMessage('deeprelay'), 401);
     const model_ = model || DEFAULT_MODELS.deeprelay;
-    const r = await fetch(`${DEEPRELAY_BASE_URL}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: model_, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages.map((m) => ({ role: m.role, content: m.content }))], temperature: 0.7, ...(json ? { response_format: { type: 'json_object' } } : {}) }), ...(signal ? { signal } : {}) });
+    const r = await fetch(`${DEEPRELAY_BASE_URL}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: model_, messages: [...(system ? [{ role: 'system', content: system }] : []), ...openAiMessages(messages, images)], temperature: 0.7, ...(json ? { response_format: { type: 'json_object' } } : {}) }), ...(signal ? { signal } : {}) });
     const raw = await r.text(); let body: any = {};
     try { body = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON error body */ }
     if (!r.ok) { aiLog({ provider: 'deeprelay', model: model_, status: r.status, error: true }); throw new ApiError(`Deep Relay: ${providerErrorText(body, r.status)}`, r.status === 401 ? 401 : 502); }
@@ -473,6 +543,7 @@ async function runCompletion(opts: {
       effort,
       search,
       signal,
+      images,
     });
   } catch (err: any) {
     const msg = String(err?.message || 'AI request failed');
@@ -480,10 +551,7 @@ async function runCompletion(opts: {
       throw new ApiError(notConnectedMessage(provider), 401);
     }
     if (provider === 'claude' && /not allowed for this organization/i.test(msg)) {
-      throw new ApiError('Claude subscription sign-in is restricted for your organisation. Use Claude via OpenCode or add a Gemini API key instead.', 401);
-    }
-    if (provider === 'opencode' && /unavailable/i.test(msg)) {
-      throw new ApiError('OpenCode: this model is not on your plan. Pick one from “Find models” (Go-included: deepseek-v4.1-flash, grok-4.7, qwen3.8-flash, glm-5.3-flash …).', 400);
+      throw new ApiError('Claude subscription sign-in is restricted for your organisation. Use another connected provider instead.', 401);
     }
     throw new ApiError(msg, 502);
   }
@@ -504,7 +572,6 @@ app.get('/api/oauth/status', (req: Request, res: Response) => {
       chatgpt: { connected: isProviderConnected('chatgpt') },
       claude: { connected: isProviderConnected('claude') },
       grok: { connected: isProviderConnected('grok') },
-      opencode: { connected: isProviderConnected('opencode') },
       deeprelay: { connected: isProviderConnected('deeprelay') },
       custom: { connected: isProviderConnected('custom') },
     },
@@ -951,15 +1018,6 @@ app.post('/api/oauth/complete', async (req: Request, res: Response) => {
 // 5. POST /api/oauth/logout: revoke the locally stored subscription tokens
 app.post('/api/oauth/logout', (req: Request, res: Response) => {
   const { provider } = req.body || {};
-  if (provider === 'opencode') {
-    // The OpenCode key is a plain API key in <PULSE_DATA_DIR>/.env, not an OAuth token.
-    try {
-      clearEnvValue('OPENCODE_API_KEY');
-      return res.json({ ok: true, connected: false, provider });
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Could not remove the OpenCode key.' });
-    }
-  }
   const internal = INTERNAL_PROVIDER[provider];
   if (!internal) {
     return res.status(400).json({ error: `Unsupported provider: ${provider}` });
@@ -988,20 +1046,7 @@ app.post('/api/settings/gemini-key', (req: Request, res: Response) => {
   }
 });
 
-// 6b. POST /api/settings/opencode-key: save the OpenCode Console API key.
-// NEVER echoes the key back.
-app.post('/api/settings/opencode-key', (req: Request, res: Response) => {
-  const key = String(req.body?.apiKey || '').trim();
-  if (!/^[A-Za-z0-9_.\-]{10,}$/.test(key)) {
-    return res.status(400).json({ error: 'That does not look like a valid OpenCode API key.' });
-  }
-  try {
-    saveOpenCodeKey(key);
-    return res.json({ ok: true, connected: true });
-  } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Could not save the OpenCode API key.' });
-  }
-});
+
 
 
 app.post('/api/settings/deeprelay-key', (req: Request, res: Response) => {
@@ -1525,36 +1570,6 @@ async function listProviderModels(uiId: 'claude' | 'grok' | 'chatgpt'): Promise<
   }
 }
 
-async function listOpenCodeModels(): Promise<{ models: { id: string; name: string; source: string }[]; error?: string }> {
-  if (!isProviderConnected('opencode')) return { models: [], error: 'No OpenCode API key saved.' };
-  const key = opencodeKey();
-  // A Go subscription is served under /inference/go/v1/models, a Console key under
-  // /inference/v1/models. Try Go first so Go users only see their included models.
-  const urls = [OPENCODE_GO_MODELS_URL, OPENCODE_MODELS_URL];
-  let lastError = '';
-  for (const url of urls) {
-    try {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
-      const b: any = await r.json().catch(() => ({}));
-      if (!r.ok) { lastError = providerErrorText(b, r.status); continue; }
-      const rows: any[] = Array.isArray(b?.data) ? b.data : Array.isArray(b?.models) ? b.models : [];
-      const models = rows
-        .map((m: any) => {
-          const id = String(m?.id ?? m?.name ?? '');
-          return { id, name: String(m?.name || id), source: 'account' };
-        })
-        .filter((m) => m.id);
-      if (models.length) {
-        aiLog({ provider: 'opencode', action: 'models', url, count: models.length });
-        return { models };
-      }
-    } catch (e: any) {
-      lastError = e?.message || 'network error';
-    }
-  }
-  return { models: [], error: lastError || 'Could not list OpenCode models.' };
-}
-
 async function listGeminiModels(): Promise<{ models: { id: string; name: string; source: string }[]; error?: string }> {
   if (!isProviderConnected('gemini')) return { models: [], error: 'No Gemini API key saved.' };
   try {
@@ -1589,7 +1604,7 @@ app.get('/api/models/available', async (req: Request, res: Response) => {
   const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
   const probe = req.query.probe === '1' || req.query.probe === 'true';
   const only = String(req.query.provider || '').trim();
-  if (only && !['gemini', 'chatgpt', 'claude', 'grok', 'opencode', 'custom', 'deeprelay'].includes(only)) {
+  if (only && !['gemini', 'chatgpt', 'claude', 'grok', 'custom', 'deeprelay'].includes(only)) {
     return res.status(400).json({ error: `Unknown provider: ${only}` });
   }
   // The full, unprobed list is cacheable; targeted or probed requests are not.
@@ -1629,11 +1644,6 @@ app.get('/api/models/available', async (req: Request, res: Response) => {
     if (gem.error) errors.gemini = gem.error;
   }
 
-  if (!only || only === 'opencode') {
-    const oc = await listOpenCodeModels();
-    providers.opencode = oc.models;
-    if (oc.error) errors.opencode = oc.error;
-  }
 
 
   if (!only || only === 'deeprelay') {
@@ -1656,7 +1666,7 @@ app.get('/api/models/available', async (req: Request, res: Response) => {
 app.post('/api/models/probe', async (req: Request, res: Response) => {
   const provider = String(req.body?.provider || '').trim();
   const model = String(req.body?.model || '').trim();
-  if (!['gemini', 'chatgpt', 'claude', 'grok', 'opencode', 'custom', 'deeprelay'].includes(provider)) {
+  if (!['gemini', 'chatgpt', 'claude', 'grok', 'custom', 'deeprelay'].includes(provider)) {
     return res.status(400).json({ error: 'Choose a provider to test.' });
   }
   if (!model || model.length > 200) {
@@ -1677,7 +1687,6 @@ const CATALOG_PROVIDER_MAP: Record<string, string> = {
   claude: 'anthropic',
   gemini: 'google',
   grok: 'xai',
-  opencode: 'opencode',
 };
 let modelsCatalogCache: { at: number; payload: any } | null = null;
 
@@ -1849,6 +1858,10 @@ app.post('/api/ai/verify-item', async (req: Request, res: Response) => {
     });
     const parsed = extractJson<{ keyCorrect?: boolean; premiseSupported?: boolean; reason?: string }>(text);
     // Only a wrong key or a contradicted premise drops an item. Sources that are silent on a point do not.
+    // A reply that could not be read is not a pass: nothing was checked, so say so.
+    if (!parsed || (typeof parsed.keyCorrect !== 'boolean' && typeof parsed.premiseSupported !== 'boolean')) {
+      return res.status(502).json({ error: 'The fact check gave no readable answer. Try again.' });
+    }
     const supported = parsed?.keyCorrect !== false && parsed?.premiseSupported !== false;
     return res.json({ verdict: supported ? 'supported' : 'unsupported', reason: String(parsed?.reason ?? '').slice(0, 300) });
   } catch (err: any) {
@@ -1913,7 +1926,7 @@ app.post('/api/ai/complete', async (req: Request, res: Response) => {
   });
   try {
     const grounded = groundOn && typeof groundOn === 'object' ? await withInternetSources(messages, groundOn) : messages;
-    const text = await gatedCompletion({ provider, model, system, messages: grounded, json, effort, purpose: 'write', signal: controller.signal, session: req.header('x-opencode-session') || undefined });
+    const text = await gatedCompletion({ provider, model, system, messages: grounded, json, effort, purpose: 'write', signal: controller.signal });
     if (controller.signal.aborted) return;
     if (!text || !text.trim()) {
       return res.status(502).json({ error: 'The AI provider returned an empty response. Try again.' });
@@ -1921,6 +1934,30 @@ app.post('/api/ai/complete', async (req: Request, res: Response) => {
     return res.json({ success: true, text, model: model || DEFAULT_MODELS[provider] });
   } catch (err: any) {
     if (controller.signal.aborted) return; // client stopped it; nothing to answer
+    const status = err instanceof ApiError ? err.status : 502;
+    if (!res.headersSent) return res.status(status).json({ error: err?.message || 'AI request failed.' });
+  }
+});
+
+// Like /api/ai/complete, with pictures (data URLs in `images`) attached to the last message. Used to read a scanned page and to
+// check a picture; the model must be able to see images (Gemini, ChatGPT, Claude and Grok can; many text-only models cannot).
+app.post('/api/ai/complete-images', async (req: Request, res: Response) => {
+  const { provider, model, system, messages, json, effort, images } = req.body || {};
+  if (!provider) return res.status(400).json({ error: 'No AI provider selected. Connect an AI provider in Settings.' });
+  if (!Array.isArray(messages) || messages.length === 0 || messages.some((m: any) => !m || typeof m.content !== 'string')) {
+    return res.status(400).json({ error: 'messages must be an array of {role, content}.' });
+  }
+  const pictures = Array.isArray(images) ? images.filter((u: any) => typeof u === 'string' && /^data:image\/(png|jpe?g|webp);base64,/i.test(u)).slice(0, 6) : [];
+  if (!pictures.length) return res.status(400).json({ error: 'images must be data URLs of PNG, JPEG or WebP pictures.' });
+  const controller = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) controller.abort(); });
+  try {
+    const text = await gatedCompletion({ provider, model, system, messages, json, effort, purpose: 'vision', images: pictures, signal: controller.signal });
+    if (controller.signal.aborted) return;
+    if (!text || !text.trim()) return res.status(502).json({ error: 'The AI provider returned an empty response. Try again.' });
+    return res.json({ success: true, text, model: model || DEFAULT_MODELS[provider] });
+  } catch (err: any) {
+    if (controller.signal.aborted) return;
     const status = err instanceof ApiError ? err.status : 502;
     if (!res.headersSent) return res.status(status).json({ error: err?.message || 'AI request failed.' });
   }
@@ -1945,12 +1982,11 @@ app.post('/api/ai/jobs', (req: Request, res: Response) => {
   const id = crypto.randomUUID();
   const job: CompletionJob = { controller: new AbortController(), done: false, status: 200, body: null, createdAt: Date.now() };
   completionJobs.set(id, job);
-  const session = req.header('x-opencode-session') || undefined;
   lastEngine = { provider: String(provider), model: String(model || DEFAULT_MODELS[provider] || provider), at: new Date().toISOString() };
   void (async () => {
     try {
       const grounded = groundOn && typeof groundOn === 'object' ? await withInternetSources(messages, groundOn) : messages;
-      const text = await runCompletion({ provider, model, system, messages: grounded, json, effort, purpose: 'write', signal: job.controller.signal, session });
+      const text = await runCompletion({ provider, model, system, messages: grounded, json, effort, purpose: 'write', signal: job.controller.signal });
       if (!text || !text.trim()) {
         job.status = 502;
         job.body = { error: 'The AI provider returned an empty response. Try again.' };
@@ -2027,7 +2063,7 @@ app.post('/api/ai/tutor-chat', async (req: Request, res: Response) => {
   // The client sends its ACTIVE provider/model; if absent, resolve any connected provider.
   let provider: string = typeof body.provider === 'string' ? body.provider : '';
   if (!provider) {
-    const candidates = ['chatgpt', 'claude', 'grok', 'opencode', 'gemini'];
+    const candidates = ['chatgpt', 'claude', 'grok', 'gemini'];
     provider = candidates.find((p) => isProviderConnected(p)) || '';
   }
   if (!provider) {
@@ -2073,16 +2109,47 @@ app.post('/api/ai/tutor-chat', async (req: Request, res: Response) => {
 
   const messages: OAuthChatMessage[] = [...history, { role: 'user', content: message }];
 
-  // Evidence for this question: a drug label and PubMed abstracts, fetched before the model answers.
+  // Evidence for this question: a drug label and Europe PMC abstracts, fetched before the model answers.
   // The model is told to rely on them where they apply and to cite them by title.
-  const evidence = await literatureSources(message.slice(0, 200), typeof body.subject === 'string' ? body.subject : '').catch(() => []);
+  const trimmedMessage = message.trim();
+  const greetingOrThanks = /^(hi|hello|hey|thanks|thank you|ok|okay|namaste)[!.?]*$/i.test(trimmedMessage);
+  const skipWebResearch = trimmedMessage.length < 12 || greetingOrThanks;
+  const emptyWebResearch = { sources: [] as Array<{ title: string; url?: string; text?: string }> };
+  const webResearchPromise = skipWebResearch
+    ? Promise.resolve(emptyWebResearch)
+    : Promise.race([
+        webResearch(message.slice(0, 240), 1800).catch(() => emptyWebResearch),
+        new Promise<typeof emptyWebResearch>((resolve) => setTimeout(() => resolve(emptyWebResearch), 8000)),
+      ]);
+  const [webEvidenceResult, literatureEvidence] = await Promise.all([
+    webResearchPromise.catch(() => emptyWebResearch),
+    literatureSources(message.slice(0, 200), typeof body.subject === 'string' ? body.subject : '').catch(() => []),
+  ]);
+  const webEvidence = webEvidenceResult.sources.map((s) => ({
+    title: s.title,
+    url: s.url || '',
+    text: s.text,
+  }));
+  const seenTitles = new Set<string>();
+  const evidence = [...webEvidence, ...literatureEvidence]
+    .filter((s) => {
+      const key = String(s.title || '').toLowerCase();
+      if (seenTitles.has(key)) return false;
+      seenTitles.add(key);
+      return true;
+    })
+    .slice(0, 8);
+  // The model is told what the search really did. "Returned nothing" and "could not run" are
+  // different facts, and only one of them means the internet was actually checked.
+  const searchInstruction = 'A background search of the student\'s textbooks, the web and Europe PMC has ALREADY been run for this question. Its results are below. Use them where they apply and cite them by title. Never say that you cannot search the web or have no search tool: the search has been done for you. If the results do not cover the question, say "the search did not return a direct source for this" and answer from your own knowledge, saying that it is from your own knowledge.';
+  const noEvidenceSearchInstruction = 'A background search of the student\'s textbooks, the web and Europe PMC was run for this question but returned nothing useful. Never say that you cannot search the web or have no search tool: the search has been done for you. Say that the search found no direct source, then answer from your own knowledge and label it as such.';
   const groundedSystem = evidence.length
     ? [
         system,
-        'Evidence retrieved for this question (use it where it applies, cite it by its title, and say when a point is from your own knowledge rather than these sources):',
+        searchInstruction,
         ...evidence.map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${String(s.text || '').slice(0, 1200)}`),
       ].join('\n\n')
-    : system;
+    : [system, noEvidenceSearchInstruction].join('\n\n');
 
   try {
     const raw = await runCompletion({
@@ -2092,7 +2159,6 @@ app.post('/api/ai/tutor-chat', async (req: Request, res: Response) => {
       messages,
       json: true,
       effort: typeof body.effort === 'string' ? body.effort : undefined,
-      session: req.header('x-opencode-session') || undefined,
     });
 
     const parsed = parseJsonBlock(raw);
@@ -2134,7 +2200,7 @@ app.post('/api/ai/tutor-chat', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/images/search?q=... -> PD/CC0-licensed clinical figures from Open-i (NLM) and Wikimedia Commons.
+// GET /api/images/search?q=... -> CC0, Public Domain, CC BY or CC BY-SA (with credit) clinical figures from Open-i (NLM) and Wikimedia Commons.
 // Results also need strong metadata relevance; weak or uncertain matches are omitted.
 app.get('/api/images/search', async (req: Request, res: Response) => {
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -2162,6 +2228,38 @@ app.get('/api/images/proxy', async (req: Request, res: Response) => {
 
 
 
+const VISION_PROVIDERS = ['chatgpt', 'claude', 'grok', 'deeprelay'];
+const BLIND_CHECK_PROVIDERS = ['deeprelay'];
+
+// One-model safety step: the model first says what the picture is WITHOUT being shown the label, then the same model
+// compares its own answer with the label. A picture passes only when it is a real clinical picture and the blind
+// answer is the same condition as the label. Any error or odd reply fails closed.
+async function blindPictureCheck(opts: { provider: string; model: string; dataUrl: string; claim: string; modality: string }): Promise<{ pass: boolean; reason: string }> {
+  const { provider, model, dataUrl, claim } = opts;
+  const timeout = () => AbortSignal.timeout(Number(process.env.VISION_TIMEOUT_MS || 180000));
+  const parseJson = (t: string) => { try { return JSON.parse(String(t).replace(/^```json|```$/g, '').trim()); } catch { const m = String(t).match(/\{[\s\S]*\}/); try { return m ? JSON.parse(m[0]) : null; } catch { return null; } } };
+  const first = parseJson(await gatedCompletion({
+    provider, model, system: 'You are a strict medical-image examiner. Reply with only a JSON object.',
+    messages: [{ role: 'user', content: 'Look at this picture. Is it a real clinical picture (patient photo, scan, ECG, slide or specimen)? A diagram, drawing, sign, poster, simulation, multi-panel plate or non-medical photo is NOT. What is the single most likely diagnosis or finding? ALSO say whether the picture has readable words that name or hint at the diagnosis or finding (a title such as "Acute inferior myocardial infarction", a caption, a large overlay such as "Lytic lesions", an annotation or a website watermark that states the condition). Lead names (I, II, V1, aVF), axis labels, scale bars, left/right markers, patient names and plain credits do NOT count. Reply {"diagnosable":true|false,"diagnosis":"...","wordsGiveDiagnosis":true|false}' }],
+    json: true, effort: 'medium', purpose: 'vision', images: [dataUrl], signal: timeout(),
+  }));
+  if (!first || first.diagnosable !== true || typeof first.diagnosis !== 'string' || !first.diagnosis.trim()) {
+    return { pass: false, reason: 'Blind check: this does not look like a diagnosable clinical picture.' };
+  }
+  if (first.wordsGiveDiagnosis === true) {
+    return { pass: false, reason: 'The picture has words printed on it that name the diagnosis, so a student could read the answer off the image.' };
+  }
+  const cmp = parseJson(await gatedCompletion({
+    provider, model, system: 'You compare two medical diagnoses. Reply with only JSON.',
+    messages: [{ role: 'user', content: `Is diagnosis A the same condition or finding as diagnosis B? A more specific or more general wording of the SAME condition is "same"; a different condition is "different"; related but not the same is "partial".\nA: ${first.diagnosis.slice(0, 200)}\nB: ${claim.slice(0, 200)}\nReply {"verdict":"same|partial|different"}` }],
+    json: true, effort: 'low', purpose: 'write', signal: timeout(),
+  }));
+  if (cmp?.verdict !== 'same') {
+    return { pass: false, reason: `Blind check: the model read the picture as "${first.diagnosis.slice(0, 80)}", which does not match the label.` };
+  }
+  return { pass: true, reason: 'Blind check matched the label.' };
+}
+
 // Vision check: does `imageUrl` actually show `claim`? Shared by the /verify route and
 // the bank harvest (so both use identical strictness). Fail-closed: any error, missing
 // key, unsupported type or non-answer yields pass=false — an unverified picture is NEVER
@@ -2170,7 +2268,7 @@ async function visionVerify(
   imageUrl: string,
   claim: string,
   modality: string,
-  questionContext: { questionStem?: string; questionText?: string; correctAnswer?: string; explanation?: string; boardPearl?: string; bodyPart?: string } = {},
+  questionContext: { questionStem?: string; questionText?: string; correctAnswer?: string; explanation?: string; boardPearl?: string; bodyPart?: string; attached?: boolean } = {},
   provider: string = 'gemini',
   model: string = '',
   attempt = 0,
@@ -2194,9 +2292,34 @@ async function visionVerify(
     explanation: questionContext.explanation,
     boardPearl: questionContext.boardPearl,
     bodyPart: questionContext.bodyPart,
+    attached: questionContext.attached === true,
   });
   if (provider !== 'gemini') {
-    return { pass: false, reason: 'The selected model cannot check images. Use Gemini for image questions.' };
+    // Any connected model may check pictures. A measured test of 301 pictures (reviewed by Opus) found DeepSeek and ChatGPT Luna
+    // equally accurate, but DeepSeek-class models (DeepRelay) say "yes" to a label more often than they should
+    // on subtle pictures, so they get one extra step: they must name the finding blind first, and it must match the label.
+    if (!VISION_PROVIDERS.includes(provider)) {
+      return { pass: false, reason: 'The selected model cannot check pictures. Use ChatGPT, Claude, Grok, DeepSeek (DeepRelay) or Gemini for images.' };
+    }
+    try {
+      if (BLIND_CHECK_PROVIDERS.includes(provider)) {
+        const blind = await blindPictureCheck({ provider, model: model || DEFAULT_MODELS[provider], dataUrl, claim, modality });
+        if (!blind.pass) return { pass: false, reason: blind.reason };
+      }
+      const text = await gatedCompletion({
+        provider, model: model || DEFAULT_MODELS[provider],
+        system: 'You are a strict medical-image verifier. Reply with only a JSON object.',
+        messages: [{ role: 'user', content: instruction }],
+        json: true, effort: 'low', purpose: 'vision', images: [dataUrl],
+        signal: AbortSignal.timeout(Number(process.env.VISION_TIMEOUT_MS || 180000)),
+      });
+      const verdict = parseVisionVerdict(text);
+      const pass = verdict?.pass === true;
+      aiLog({ provider, model: model || DEFAULT_MODELS[provider], route: 'images/verify', pass, text_len: text.length });
+      return { pass, reason: verdict?.reason || (pass ? 'Verified.' : 'Model did not return a complete structured verdict — image skipped.') };
+    } catch (err: any) {
+      return { pass: false, reason: `Vision check failed: ${String(err?.message || err).slice(0, 160)}` };
+    }
   }
   const model_ = model || DEFAULT_MODELS.gemini;
   const payload = JSON.stringify({
@@ -2277,7 +2400,7 @@ app.post('/api/images/verify', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'imageUrl and claim are required.' });
   }
   try {
-    const verdict = await visionVerify(imageUrl, claim, modality, { questionStem, questionText, correctAnswer, explanation, boardPearl, bodyPart }, provider, model);
+    const verdict = await visionVerify(imageUrl, claim, modality, { questionStem, questionText, correctAnswer, explanation, boardPearl, bodyPart, attached: req.body?.attached === true }, provider, model);
     return res.json(verdict);
   } catch (err: any) {
     return res.json({ pass: false, reason: err?.message || 'Vision check failed — image skipped.' });
@@ -2426,17 +2549,21 @@ app.post('/api/images/generate-question', async (req: Request, res: Response) =>
   const groundTruth = typeof body.groundTruth === 'string' ? body.groundTruth.trim() : '';
   const imageId = typeof body.imageId === 'string' ? body.imageId : '';
   const provider = typeof body.provider === 'string' ? body.provider : 'gemini';
-  const model = typeof body.model === 'string' ? body.model : DEFAULT_MODELS.gemini;
+  const model = typeof body.model === 'string' && body.model ? body.model : (DEFAULT_MODELS[provider] || DEFAULT_MODELS.gemini);
   if (!imageUrl || !groundTruth) {
     return res.status(400).json({ error: 'imageUrl and groundTruth are required.' });
   }
-  if (provider !== 'gemini') {
-    return res.status(400).json({ error: 'The selected model cannot check images. Use Gemini for image questions.' });
+  // Gemini goes through its own endpoint; ChatGPT, Claude and Grok read the picture through the shared completion path.
+  // DeepRelay (DeepSeek) are allowed too; their picture checks add a blind-diagnosis step (see visionVerify).
+  if (provider !== 'gemini' && !VISION_PROVIDERS.includes(provider)) {
+    return res.status(400).json({ error: 'The selected model cannot read images. Use ChatGPT, Claude, Grok, DeepSeek (DeepRelay) or Gemini for image questions.' });
   }
-  const key = geminiKey();
+  const key = provider === 'gemini' ? geminiKey() : 'via-chat';
   if (!key) {
     return res.status(401).json({ error: notConnectedMessage('gemini') });
   }
+  const complete = provider === 'gemini' ? undefined : async ({ system, instruction, dataUrl }: { system: string; instruction: string; dataUrl: string }) =>
+    gatedCompletion({ provider, model, system, messages: [{ role: 'user', content: instruction }], json: true, effort: 'medium', purpose: 'vision', images: [dataUrl], signal: AbortSignal.timeout(Number(process.env.VISION_TIMEOUT_MS || 180000)) });
   try {
     const writeOnce = () => generateQuestionFromImage({
       imageUrl,
@@ -2450,6 +2577,7 @@ app.post('/api/images/generate-question', async (req: Request, res: Response) =>
       apiKey: key,
       model,
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      complete,
     });
     let question;
     try {
@@ -2469,7 +2597,7 @@ app.post('/api/images/generate-question', async (req: Request, res: Response) =>
     if (msg === 'image_mismatch' && imageId) {
       try { rejectImage(imageId, groundTruth, msg); } catch { /* bookkeeping only */ }
     }
-    aiLog({ provider: 'gemini', route: 'images/generate-question', error: true, status, reason: msg.slice(0, 200) });
+    aiLog({ provider, route: 'images/generate-question', error: true, status, reason: msg.slice(0, 200) });
     return res.status(status).json({ error: msg });
   }
 });
@@ -2478,8 +2606,8 @@ app.post('/api/images/generate-question', async (req: Request, res: Response) =>
 app.get('/api/images/sources', (_req: Request, res: Response) => {
   res.json({
     embedded: [
-      { name: 'Open-i (NLM / PubMed Central)', url: 'https://openi.nlm.nih.gov/', note: 'Live search; CC0 and Public Domain items only.' },
-      { name: 'Wikimedia Commons (CDC PHIL and others)', url: 'https://commons.wikimedia.org/', note: 'PD/CC0 images only; verify the license shown for each source file.' },
+      { name: 'Open-i (NLM / PubMed Central)', url: 'https://openi.nlm.nih.gov/', note: 'Live search; CC0, Public Domain, CC BY or CC BY-SA items (with credit).' },
+      { name: 'Wikimedia Commons (CDC PHIL and others)', url: 'https://commons.wikimedia.org/', note: 'CC0, Public Domain, CC BY or CC BY-SA images (with credit); verify the license shown for each source file.' },
     ],
     reference: REFERENCE_SOURCES,
   });
@@ -2498,7 +2626,7 @@ function qaComplete(provider: string, model: string): CompleteFn {
     const modelOverride = role ? process.env[`QA_MODEL_${role.toUpperCase()}`] : undefined;
     return runCompletion({
       provider,
-      model: modelOverride || model || DEFAULT_MODELS[provider] || DEFAULT_MODELS.opencode,
+      model: modelOverride || model || DEFAULT_MODELS[provider],
       system,
       messages,
       json,
@@ -2518,7 +2646,8 @@ app.post('/api/qa/review', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'question is required.' });
   }
   const runLlm = req.body?.runLlm === true;
-  const provider = String(req.body?.provider || 'opencode');
+  const provider = String(req.body?.provider || '').trim();
+  if (!provider) return res.status(400).json({ error: 'An AI provider must be chosen.' });
   const model = String(req.body?.model || DEFAULT_MODELS[provider] || '');
   const complete = runLlm ? qaComplete(provider, model) : undefined;
   try {
@@ -2549,7 +2678,8 @@ app.post('/api/qa/review-batch', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'questions (array) is required.' });
   }
   const runLlm = req.body?.runLlm === true;
-  const provider = String(req.body?.provider || 'opencode');
+  const provider = String(req.body?.provider || '').trim();
+  if (!provider) return res.status(400).json({ error: 'An AI provider must be chosen.' });
   const model = String(req.body?.model || DEFAULT_MODELS[provider] || '');
   const complete = runLlm ? qaComplete(provider, model) : undefined;
   // Questions are reviewed three at a time; results keep the order they were sent in.
@@ -2578,7 +2708,8 @@ app.post('/api/qa/refine-batch', async (req: Request, res: Response) => {
   if (!Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: 'questions (array) is required.' });
   }
-  const provider = String(req.body?.provider || 'opencode');
+  const provider = String(req.body?.provider || '').trim();
+  if (!provider) return res.status(400).json({ error: 'An AI provider must be chosen.' });
   const model = String(req.body?.model || DEFAULT_MODELS[provider] || '');
   const complete = qaComplete(provider, model);
   try {
@@ -2589,20 +2720,28 @@ app.post('/api/qa/refine-batch', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/web/research {query} -> real internet search (DuckDuckGo + PubMed).// Sources carry their URLs; the client may ask the AI to summarise them. Never canned.
+// POST /api/web/research {query} -> real internet search (DuckDuckGo + Europe PMC + openFDA).
+// Sources carry their URLs; the client may ask the AI to summarise them. Never canned.
+//
+// `search` reports what actually happened, so the assistant can be told the truth:
+//   ok           — sources found
+//   empty        — the internet answered but matched nothing
+//   unavailable  — the internet could not be reached (offline, blocked or timed out)
+// A bare success flag for all three made a dead connection look like a normal empty answer.
 app.post('/api/web/research', async (req: Request, res: Response) => {
   const query = typeof req.body?.query === 'string' ? req.body.query : '';
   try {
     const pageChars = Math.min(30000, Math.max(2500, Number(req.body?.pageChars) || 2500));
     // My books mode: the sources are the learner's own books only, the subject's book first and then the others.
+    // This is a local database read, so the internet is never touched and never reported as unavailable.
     if (req.body?.books) {
       const found = searchMyBooks(query, typeof req.body?.subject === 'string' ? req.body.subject : '', 6, Math.min(pageChars, 2500));
-      return res.json({ success: true, sources: found.map((f: any) => ({ title: `${f.title} — ${f.heading}`, url: `mybooks:${f.title}`, text: f.text, kind: 'book' })), retrievedAt: new Date().toISOString() });
+      return res.json({ success: true, search: found.length ? 'local' : 'empty', sources: found.map((f: any) => ({ title: `${f.title} — ${f.heading}`, url: `mybooks:${f.title}`, text: f.text, kind: 'book' })), retrievedAt: new Date().toISOString() });
     }
     const out = await webResearch(query, pageChars);
-    return res.json({ success: true, sources: out.sources, retrievedAt: out.retrievedAt });
+    return res.json({ success: true, search: out.search ?? 'ok', searchDetail: out.detail || '', sources: out.sources, retrievedAt: out.retrievedAt });
   } catch (err: any) {
-    return res.status(502).json({ error: err?.message || 'Web research failed.' });
+    return res.status(502).json({ success: false, search: 'unavailable', searchDetail: err?.message || 'Web research failed.' });
   }
 });
 
@@ -2717,7 +2856,7 @@ app.get('/api/providers/status', (req: Request, res: Response) => {
   const customEndpoints = readCustomEndpoints();
   res.json({
     providers: [
-      ...(['gemini', 'chatgpt', 'claude', 'grok', 'opencode', 'deeprelay'] as string[]).map((id) => ({
+      ...(['gemini', 'chatgpt', 'claude', 'grok', 'deeprelay'] as string[]).map((id) => ({
         id,
         model: DEFAULT_MODELS[id],
         connected: isProviderConnected(id),
@@ -2770,18 +2909,30 @@ async function startServer() {
     });
   }
 
-  // Listen on the loopback addresses only, so other computers on the network cannot reach the server. Both IPv4 and
-  // IPv6 loopback are opened, because "localhost" may resolve to either (binding only one caused ECONNREFUSED before).
-  // HOST can still override this with one specific address.
-  const hosts = process.env.HOST ? [process.env.HOST] : ['127.0.0.1', '::1'];
+  // In phone mode, listen on all IPv4 interfaces so the phone can reach the PC over Wi-Fi, plus IPv6 loopback.
+  // Otherwise keep the original loopback-only behaviour. HOST can still override the non-phone listener.
+  const hosts = PHONE_MODE ? ['0.0.0.0', '::1'] : (process.env.HOST ? [process.env.HOST] : ['127.0.0.1', '::1']);
   for (const host of hosts) {
     const httpServer = app.listen(PORT, host, () => {
-      console.log(`[Pulse Med Server] Running on http://${host.includes(':') ? `[${host}]` : host}:${PORT} (this computer only)`);
+      if (PHONE_MODE && host === '0.0.0.0') {
+        console.log(`[Pulse Med Server] Running on http://0.0.0.0:${PORT} (Wi-Fi phone mode)`);
+        const lanAddresses = lanIPv4Addresses();
+        if (lanAddresses.length === 0) {
+          console.warn('[Pulse Med Server] Phone mode is on, but no non-internal IPv4 address was found.');
+        } else {
+          for (const address of lanAddresses) {
+            console.log(`[Pulse Med Server] Phone URL: http://${address}:${PORT}`);
+          }
+        }
+        console.log('[Pulse Med Server] Phone mode is on; unlock with the configured PULSE_REMOTE_PIN.');
+      } else {
+        console.log(`[Pulse Med Server] Running on http://${host.includes(':') ? `[${host}]` : host}:${PORT} (this computer only)`);
+      }
     });
     // A machine without IPv6 cannot bind ::1; the IPv4 server still works, so that failure is only a warning.
     httpServer.on('error', (err: NodeJS.ErrnoException) => {
       if (host !== '127.0.0.1' && (err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')) {
-        console.warn(`[Pulse Med Server] Could not bind ${host} (${err.code}); IPv4 loopback is still served.`);
+        console.warn(`[Pulse Med Server] Could not bind ${host} (${err.code}); ${PHONE_MODE ? 'the other listener is still served.' : 'IPv4 loopback is still served.'}`);
         return;
       }
       throw err;

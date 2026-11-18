@@ -40,6 +40,8 @@ const verdictCache = new Map<string, { pass: boolean; reason: string }>();
 export interface ImageVerdict {
   pass: boolean;
   reason: string;
+  /** The caller's check budget is used up: the search stops. */
+  stop?: boolean;
 }
 
 /**
@@ -84,6 +86,106 @@ async function verifyImageMatches(image: LiveImage, claim: string, timeoutMs = 4
   }
 }
 
+/** The question a picture is meant for. The picture is checked against it, not only against the search words. */
+export interface PictureQuestion {
+  id?: string;
+  stem?: string;
+  questionText?: string;
+  options: { id: string; text: string }[];
+  correctOption: string;
+  explanation?: string;
+  boardPearl?: string;
+  figureQuery?: string;
+  figureModality?: string;
+}
+
+/** Looks at the picture with the written question beside it: right kind of picture, shows what the answer depends on. */
+async function verifyImageForQuestion(image: LiveImage, q: PictureQuestion, timeoutMs = 60000): Promise<ImageVerdict> {
+  const key = `${image.id}::q::${q.id ?? ''}::${(q.questionText ?? '').slice(0, 80)}`;
+  const cached = verdictCache.get(key);
+  if (cached) return cached;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const provider = getActiveProvider();
+    const model = provider ? getEffectiveModel(provider) : undefined;
+    const res = await fetch('/api/images/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageUrl: image.imageUrl,
+        claim: q.figureQuery || q.questionText || 'picture for the question',
+        modality: q.figureModality || image.modality || '',
+        questionStem: q.stem ?? '',
+        questionText: q.questionText ?? '',
+        correctAnswer: q.options.find((o) => o.id === q.correctOption)?.text ?? '',
+        explanation: (q.explanation ?? '').slice(0, 1500),
+        boardPearl: q.boardPearl ?? '',
+        attached: true,
+        ...(provider ? { provider, model } : {}),
+      }),
+      signal: controller.signal,
+    });
+    const body: any = await res.json().catch(() => ({}));
+    const verdict: ImageVerdict = {
+      pass: body?.pass === true,
+      reason: typeof body?.reason === 'string' ? body.reason : res.ok ? 'Not confirmed.' : `HTTP ${res.status}`,
+    };
+    verdictCache.set(key, verdict);
+    return verdict;
+  } catch (e: any) {
+    return { pass: false, reason: e?.name === 'AbortError' ? 'Vision check timed out.' : (e?.message || 'Vision check failed.') };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * A picture for one written question. The first search uses the question's own picture words and checks each candidate
+ * against the written question. If none passes, ONE second search runs with different words (the answer plus the
+ * picture type) and its candidates are checked the same way. No picture after that means the caller drops the question.
+ */
+/** Starts a picture search without waiting for it, so the server holds the rows when the real search asks for them. */
+export function warmPictureSearch(query: string): void {
+  const q = String(query || '').replace(/\s+/g, ' ').trim();
+  if (!q || !isLiveImageSearchEnabled()) return;
+  void fetch(`/api/images/search?q=${encodeURIComponent(q)}`).catch(() => undefined);
+}
+
+// Picture words whose search found nothing that fits a question. Several questions on one disease ask for the same
+// picture words, so the search runs once, not once per question (it cost about 40 s each time). Kept for 20 minutes.
+const failedPictureQueries = new Map<string, number>();
+const FAILED_TTL_MS = 20 * 60 * 1000;
+const failedKey = (query: string) => query.toLowerCase().replace(/\s+/g, ' ').trim();
+
+export async function findPictureForQuestion(q: PictureQuestion, exclude: Set<string>): Promise<LiveImage | null> {
+  const first = (q.figureQuery ?? '').trim();
+  if (!first) return null;
+  const failedAt = failedPictureQueries.get(failedKey(first));
+  if (failedAt && Date.now() - failedAt < FAILED_TTL_MS) return null;
+  const answer = (q.options.find((o) => o.id === q.correctOption)?.text ?? '').replace(/\s+/g, ' ').trim();
+  const second = `${answer} ${q.figureModality ?? ''}`.replace(/\s+/g, ' ').trim();
+  const tried = new Set(exclude);
+  // Two picture checks at most: the first picture, and one second picture if the first one is doubtful.
+  let checks = 0;
+  const check = async (image: LiveImage): Promise<ImageVerdict> => {
+    if (checks >= 2) return { pass: false, reason: 'Check budget used.', stop: true };
+    checks += 1;
+    return verifyImageForQuestion(image, q);
+  };
+  const searches = [first, ...(second && second.toLowerCase() !== first.toLowerCase() ? [second] : [])].slice(0, 2);
+  // The second search is warmed while the first picture is being checked, so a doubtful first picture does not wait for it.
+  if (searches[1]) warmPictureSearch(searches[1]);
+  for (const query of searches) {
+    const found = await findLiveImage(query, tried, 12000, check);
+    if (found) return found;
+    if (checks >= 2) break;
+  }
+  // Only a search that really looked and found nothing is remembered (not one that was cut short by an error).
+  failedPictureQueries.set(failedKey(first), Date.now());
+  return null;
+}
+
 export function isLiveImageSearchEnabled(): boolean {
   try {
     const raw = localStorage.getItem(LIVE_KEY);
@@ -109,6 +211,8 @@ export async function findLiveImage(
   query: string,
   exclude?: Set<string>,
   timeoutMs = 12000,
+  /** Replaces the search-word check: used to check each candidate against the written question. */
+  check?: (image: LiveImage, query: string) => Promise<ImageVerdict>,
 ): Promise<LiveImage | null> {
   const q = String(query || '').replace(/\s+/g, ' ').trim();
   if (!q || !isLiveImageSearchEnabled()) return null;
@@ -124,6 +228,9 @@ export async function findLiveImage(
   const MODALITY_WORD = /^(histology|histological|histopathology|biopsy|micrograph|ecg|ekg|x-ray|xray|radiograph|ct|mri|ultrasound|smear|fundus|photo|photograph|clinical|image|picture)$/i;
   const core = words.filter((w) => !MODALITY_WORD.test(w));
   if (core.length && core.length < words.length) variants.push(core.join(' '));
+  // Captions often say "radiograph" or "chest film" instead of "X-ray", so each plain-name variant is also tried with those words.
+  if (core.length && core.length <= 3 && words.some((w) => /^(x-?ray|xray)$/i.test(w))) variants.push(`${core.join(' ')} radiograph`);
+  if (core.length && core.length <= 3 && words.some((w) => /^(histology|histological|histopathology|micrograph)$/i.test(w))) variants.push(`${core.join(' ')} biopsy`, `${core.join(' ')} micrograph`);
   if (core.length > 3) variants.push(core.slice(0, 3).join(' '));
   if (core.length > 2) variants.push(core.slice(0, 2).join(' '));
   if (words.length > 4) {
@@ -224,7 +331,10 @@ export async function findLiveImage(
       for (const candidate of candidates) {
         if (visionChecks >= MAX_VISION_CHECKS_PER_QUESTION) break;
         visionChecks += 1;
-        const verdict = await verifyImageMatches(candidate, tryQ);
+        const verdict = check ? await check(candidate, tryQ) : await verifyImageMatches(candidate, tryQ);
+        if (verdict.stop) return null;
+        // A candidate the question check turned down is not offered again in the second search.
+        if (!verdict.pass && check) exclude?.add(candidate.id);
         if (verdict.pass) {
           debugLog('H8', `query "${tryQ}" -> VERIFIED ${candidate.id} ${candidate.title} — ${verdict.reason}`);
           return { ...candidate, verified: true, verifyReason: verdict.reason };

@@ -281,6 +281,7 @@ export async function generateImageFirstQuestion(opts: {
     imageId: image.image_id,
     imageLicence: image.licence,
     imageLicenceUrl: image.licenceUrl,
+    imageCredit: image.attribution,
     imageGroundTruth: image.ground_truth,
     figureModality: image.modality,
   };

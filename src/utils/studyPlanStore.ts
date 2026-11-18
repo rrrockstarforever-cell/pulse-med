@@ -4,6 +4,7 @@ import { dueCount } from './flashcardStore.ts';
 import { SUBTOPICS } from '../data/subtopics.ts';
 import { nextSyllabusTopics } from './syllabusStore.ts';
 import { notifyDataChanged } from './dataEvents.ts';
+import { WEAK_BELOW, WEAK_MIN_TOTAL } from '../lib/testReview.ts';
 
 export interface StudyPlanSettings {
   exam: ExamType;
@@ -177,8 +178,10 @@ export function buildTodayPlan(exam: ExamType): PlanTask[] {
   let weak: string | null = null;
   let weakAcc = 1;
   for (const [key, v] of agg) {
-    if (v.total < 10) continue;
+    if (v.total < WEAK_MIN_TOTAL) continue;
     const acc = v.correct / v.total;
+    // Only a subject below the shared "weak" line becomes a drill.
+    if (acc * 100 >= WEAK_BELOW) continue;
     if (acc < weakAcc) {
       weak = key;
       weakAcc = acc;

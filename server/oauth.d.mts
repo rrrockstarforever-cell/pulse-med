@@ -36,6 +36,8 @@ export interface OAuthChatOptions {
   search?: boolean;
   /** Aborts the upstream provider request (Stop button in the UI). */
   signal?: AbortSignal;
+  /** Pictures as data URLs, attached to the last user message for a vision-capable model. */
+  images?: string[];
 }
 
 export declare function startLogin(provider: OAuthProvider): Promise<OAuthStartResult>;

@@ -373,8 +373,8 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
     settings.browserNotifications && permission !== 'granted' && permission !== 'unsupported';
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 p-4 pb-12">
-      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="mx-auto w-full max-w-3xl space-y-4 p-4 pb-12 max-md:space-y-2.5 max-md:p-0">
+      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm max-md:hidden">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#0f8b8d] bg-[#0f8b8d] text-white">
             <BellRing className="h-6 w-6" aria-hidden="true" />
@@ -390,10 +390,10 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
         </div>
       </header>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:border-slate-700/60">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 dark:text-slate-100">
+          <div className="min-w-0 max-md:flex-1">
+            <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 max-md:text-[14px]! max-md:font-semibold max-md:normal-case max-md:tracking-normal dark:text-slate-100">
               {settings.enabled ? (
                 <BellRing className="h-4 w-4" aria-hidden="true" />
               ) : (
@@ -401,7 +401,7 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
               )}
               Reminders are {settings.enabled ? 'on' : 'off'}
             </h2>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="mt-1 text-xs text-slate-600 max-md:mt-0.5 max-md:truncate max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
               Turning this off pauses every reminder below without losing your settings.
             </p>
           </div>
@@ -410,16 +410,16 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
             role="switch"
             aria-checked={settings.enabled}
             onClick={() => update({ enabled: !settings.enabled })}
-            className={`${settings.enabled ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white hover:bg-[#0c7476]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'} rounded-lg border shadow-sm shrink-0 px-4 py-2 text-xs font-medium uppercase tracking-wide`}
+            className={`${settings.enabled ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white hover:bg-[#0c7476]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 max-md:border-slate-200 max-md:bg-white max-md:text-slate-600 max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-300'} rounded-lg border shadow-sm shrink-0 px-4 py-2 text-xs font-medium uppercase tracking-wide max-md:inline-flex max-md:h-8 max-md:min-h-0 max-md:items-center max-md:rounded-full max-md:px-3 max-md:py-0 max-md:text-[11px]! max-md:font-semibold max-md:leading-none max-md:shadow-none`}
           >
             {settings.enabled ? 'Enabled' : 'Disabled'}
           </button>
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2">
-        <label className="block">
-          <span className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+      <section className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 max-md:grid-cols-1 max-md:gap-0 max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:border-slate-700/60">
+        <label className="block max-md:grid max-md:grid-cols-[1fr_auto] max-md:items-center max-md:gap-x-3 max-md:gap-y-0.5 max-md:border-b max-md:border-slate-200/70 max-md:py-2.5 max-md:first:pt-0 max-md:last:border-b-0 max-md:last:pb-0 max-md:dark:border-slate-700/60">
+          <span className="flex items-center gap-2 text-sm font-medium text-slate-900 max-md:min-w-0 max-md:gap-1.5 max-md:text-[14px]! max-md:font-semibold dark:text-slate-100">
             <AlarmClock className="h-4 w-4" aria-hidden="true" />
             Spaced review time
           </span>
@@ -430,15 +430,15 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
               const value = event.target.value;
               if (TIME_PATTERN.test(value)) update({ reviewTime: value });
             }}
-            className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/30"
+            className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/30 max-md:col-start-2 max-md:row-start-1 max-md:mt-0 max-md:h-9 max-md:w-[110px] max-md:rounded-lg max-md:border-slate-200 max-md:bg-slate-50 max-md:px-2 max-md:py-0 max-md:text-[13px]! max-md:text-slate-900 max-md:tabular-nums max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-100"
           />
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="mt-1 block text-xs text-slate-500 max-md:col-start-1 max-md:row-start-2 max-md:mt-0 max-md:truncate max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
             Fires once a day at or after this time when cards are due.
           </span>
         </label>
 
-        <label className="block">
-          <span className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+        <label className="block max-md:grid max-md:grid-cols-[1fr_auto] max-md:items-center max-md:gap-x-3 max-md:gap-y-0.5 max-md:border-b max-md:border-slate-200/70 max-md:py-2.5 max-md:first:pt-0 max-md:last:border-b-0 max-md:last:pb-0 max-md:dark:border-slate-700/60">
+          <span className="flex items-center gap-2 text-sm font-medium text-slate-900 max-md:min-w-0 max-md:gap-1.5 max-md:text-[14px]! max-md:font-semibold dark:text-slate-100">
             <Clock className="h-4 w-4" aria-hidden="true" />
             Study goal time
           </span>
@@ -449,21 +449,21 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
               const value = event.target.value;
               if (TIME_PATTERN.test(value)) update({ studyTime: value });
             }}
-            className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/30"
+            className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0f8b8d] focus:outline-none focus:ring-2 focus:ring-[#0f8b8d]/30 max-md:col-start-2 max-md:row-start-1 max-md:mt-0 max-md:h-9 max-md:w-[110px] max-md:rounded-lg max-md:border-slate-200 max-md:bg-slate-50 max-md:px-2 max-md:py-0 max-md:text-[13px]! max-md:text-slate-900 max-md:tabular-nums max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-100"
           />
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="mt-1 block text-xs text-slate-500 max-md:col-start-1 max-md:row-start-2 max-md:mt-0 max-md:truncate max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
             Fires once a day at or after this time if today&apos;s goal is not met.
           </span>
         </label>
       </section>
 
-      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm max-md:space-y-2 max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:border-slate-700/60">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 dark:text-slate-100">
+          <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 max-md:text-[14px]! max-md:font-semibold max-md:normal-case max-md:tracking-normal dark:text-slate-100">
             <CalendarClock className="h-4 w-4" aria-hidden="true" />
             Exam countdown
           </h2>
-          <p className="mt-1 text-xs text-slate-600">
+          <p className="mt-1 text-xs text-slate-600 max-md:mt-0.5 max-md:truncate max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
             {examDate === null
               ? 'No exam date stored yet — set it in Settings to unlock countdown reminders.'
               : `Exam date: ${formatDate(examDate)}${daysToExam === null ? '' : ` · ${daysToExam} day${daysToExam === 1 ? '' : 's'} left`}`}
@@ -478,7 +478,7 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleCountdownDay(day)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium uppercase tracking-wide ${active ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white' : 'border-slate-300 bg-white text-slate-700 opacity-70 hover:bg-slate-50 hover:opacity-100'}`}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-medium uppercase tracking-wide max-md:inline-flex max-md:h-[30px] max-md:min-h-[30px] max-md:items-center max-md:rounded-full max-md:px-3 max-md:py-0 max-md:text-[11px]! max-md:font-semibold max-md:leading-none ${active ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white' : 'border-slate-300 bg-white text-slate-700 opacity-70 hover:bg-slate-50 hover:opacity-100 max-md:border-slate-200 max-md:bg-white max-md:text-slate-600 max-md:opacity-100 max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-300'}`}
               >
                 {day} {day === 1 ? 'day' : 'days'}
               </button>
@@ -487,14 +487,14 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
         </div>
       </section>
 
-      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm max-md:space-y-2 max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:border-slate-700/60">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 dark:text-slate-100">
+          <div className="min-w-0 max-md:flex-1">
+            <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 max-md:text-[14px]! max-md:font-semibold max-md:normal-case max-md:tracking-normal dark:text-slate-100">
               <Monitor className="h-4 w-4" aria-hidden="true" />
               Desktop notifications
             </h2>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="mt-1 text-xs text-slate-600 max-md:mt-0.5 max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
               Permission: {permissionLabel(permission)}
             </p>
           </div>
@@ -502,25 +502,25 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
             type="button"
             aria-pressed={settings.browserNotifications}
             onClick={() => update({ browserNotifications: !settings.browserNotifications })}
-            className={`${settings.browserNotifications ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white hover:bg-[#0c7476]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'} rounded-lg border shadow-sm shrink-0 px-4 py-2 text-xs font-medium uppercase tracking-wide`}
+            className={`${settings.browserNotifications ? 'border-[#0f8b8d] bg-[#0f8b8d] text-white hover:bg-[#0c7476]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 max-md:border-slate-200 max-md:bg-white max-md:text-slate-600 max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-300'} rounded-lg border shadow-sm shrink-0 px-4 py-2 text-xs font-medium uppercase tracking-wide max-md:inline-flex max-md:h-8 max-md:min-h-0 max-md:items-center max-md:rounded-full max-md:px-3 max-md:py-0 max-md:text-[11px]! max-md:font-semibold max-md:leading-none max-md:shadow-none`}
           >
             {settings.browserNotifications ? 'On' : 'Off'}
           </button>
         </div>
 
         {needsPermission ? (
-          <p className="text-xs text-amber-700">
+          <p className="text-xs text-amber-700 max-md:rounded-lg max-md:bg-amber-50 max-md:px-2 max-md:py-1.5 max-md:text-[12px]! max-md:text-amber-700 max-md:dark:bg-amber-500/10 max-md:dark:text-amber-400">
             Desktop notifications need browser permission. In-app banners keep working regardless.
           </p>
         ) : null}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 max-md:flex-col max-md:items-stretch max-md:gap-2 max-md:overflow-visible max-md:mx-0 max-md:px-0 max-md:pb-0">
           <button
             type="button"
             onClick={() => {
               void handleRequestPermission();
             }}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-700 shadow-sm hover:border-[#0f8b8d] hover:text-[#0f8b8d]"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-700 shadow-sm hover:border-[#0f8b8d] hover:text-[#0f8b8d] max-md:inline-flex max-md:h-8 max-md:min-h-0 max-md:shrink-0 max-md:items-center max-md:whitespace-nowrap max-md:rounded-full max-md:px-3 max-md:py-0 max-md:text-[11px]! max-md:font-semibold max-md:leading-none max-md:shadow-none max-md:w-full max-md:justify-center max-md:min-w-0 max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-300"
           >
             <BellRing className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
             Allow notifications
@@ -528,37 +528,37 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
           <button
             type="button"
             onClick={handleTestReminder}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-700 shadow-sm hover:border-[#0f8b8d] hover:text-[#0f8b8d]"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-700 shadow-sm hover:border-[#0f8b8d] hover:text-[#0f8b8d] max-md:inline-flex max-md:h-8 max-md:min-h-0 max-md:shrink-0 max-md:items-center max-md:whitespace-nowrap max-md:rounded-full max-md:px-3 max-md:py-0 max-md:text-[11px]! max-md:font-semibold max-md:leading-none max-md:shadow-none max-md:w-full max-md:justify-center max-md:min-w-0 max-md:dark:border-slate-700 max-md:dark:bg-slate-800 max-md:dark:text-slate-300"
           >
             <Send className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
             Send a test reminder
           </button>
         </div>
 
-        {notice ? <p className="text-xs text-teal-700">{notice}</p> : null}
+        {notice ? <p className="text-xs text-teal-700 max-md:text-[12px]! max-md:text-teal-700 max-md:dark:text-teal-300">{notice}</p> : null}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 dark:text-slate-100">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm max-md:space-y-2 max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:border-slate-700/60">
+        <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-slate-900 max-md:text-[14px]! max-md:font-semibold max-md:normal-case max-md:tracking-normal dark:text-slate-100">
           <BellRing className="h-4 w-4" aria-hidden="true" />
           Today&apos;s preview
         </h2>
-        <p className="mt-1 text-xs text-slate-600">
+        <p className="mt-1 text-xs text-slate-600 max-md:mt-0.5 max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
           What would fire today, using the same rules as the live engine.
         </p>
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-3 space-y-2 max-md:mt-2 max-md:space-y-1.5">
           {preview.map((item) => (
             <li
               key={item.id}
-              className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5"
+              className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5 max-md:items-center max-md:gap-2 max-md:rounded-lg max-md:border-slate-200/70 max-md:bg-slate-50 max-md:p-2 max-md:dark:border-slate-700/60 max-md:dark:bg-slate-800/60"
             >
               <span
                 className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${toneDotClass(item.tone)}`}
                 aria-hidden="true"
               />
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{item.title}</p>
-                <p className="text-xs text-slate-600">{item.detail}</p>
+                <p className="text-sm font-medium text-slate-900 dark:text-slate-100 max-md:truncate max-md:text-[13px]! max-md:font-semibold">{item.title}</p>
+                <p className="text-xs text-slate-600 max-md:truncate max-md:text-[11px]! max-md:text-slate-500 max-md:dark:text-slate-400">{item.detail}</p>
               </div>
               <span
                 className={`${toneChipClass(item.tone)} rounded-full border shrink-0 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide`}
@@ -570,7 +570,7 @@ export const RemindersView: React.FC<{ exam: ExamType }> = ({ exam }) => {
         </ul>
       </section>
 
-      <p className="flex items-start gap-2 px-1 text-xs text-slate-500">
+      <p className="flex items-start gap-2 px-1 text-xs text-slate-500 max-md:px-0 max-md:text-[11px]! max-md:text-slate-500 max-md:dark:text-slate-400">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span>Reminders only fire while Pulse Med is open.</span>
       </p>

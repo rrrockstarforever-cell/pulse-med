@@ -183,7 +183,7 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
   };
 
   return (
-    <div className="relative isolate space-y-6 max-w-7xl mx-auto overflow-hidden rounded-[28px]  p-4   md:p-6 ">
+    <div className="relative isolate space-y-6 max-w-7xl mx-auto overflow-hidden rounded-[28px]  p-4   md:p-6 max-md:p-0 max-md:rounded-none">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 z-0 opacity-[0.08] dark:opacity-[0.12]"
@@ -194,9 +194,9 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
         className="pointer-events-none absolute inset-0 z-0 hidden opacity-[0.05] [mask-image:radial-gradient(circle_at_50%_20%,black,transparent_65%)] motion-safe:block "
         style={{ backgroundImage: 'repeating-conic-gradient(from 0deg at 50% 20%, currentColor 0deg 1deg, transparent 1deg 8deg)' }}
       />
-      <div className="relative z-10 space-y-6">
+      <div className="relative z-10 space-y-6 max-md:space-y-2.5">
       {/* Mistake Dossier Hero */}
-      <div className="relative overflow-hidden rounded-[20px] border border-line-strong bg-surface p-5 text-ink dark:md:p-6">
+      <div className="relative overflow-hidden rounded-[20px] border border-line-strong bg-surface p-5 text-ink dark:md:p-6 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
         <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full opacity-40 blur-2xl dark:dark:opacity-30" />
         <div
           aria-hidden="true"
@@ -217,32 +217,40 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
         <div className="relative z-10 flex flex-col gap-5">
           <div className="flex flex-col justify-between gap-5 md:flex-row md:items-start">
             <div className="max-w-2xl">
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-line-strong bg-surface-2 text-ink-soft px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em]  ">
+              <div className="md:hidden">
+                <div className="text-[15px]! font-semibold text-slate-900 dark:text-slate-100">Mistakes</div>
+                <div className="mt-0.5 text-[12px]! text-slate-500 dark:text-slate-400">
+                  {dueCount()} card{dueCount() === 1 ? '' : 's'} due for review today
+                </div>
+              </div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-line-strong bg-surface-2 text-ink-soft px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em]   max-md:hidden">
                 <RotateCcw className="h-3.5 w-3.5" />
                 SRS Engine · {dueCount()} card{dueCount() === 1 ? '' : 's'} due
               </div>
-              <h1 className=" text-2xl font-medium tracking-tight text-ink md:text-3xl">
+              <h1 className=" text-2xl font-medium tracking-tight text-ink md:text-3xl max-md:hidden">
                 Clinical Mistake Notebook & Cognitive Root-Cause Analysis
               </h1>
-              <p className="mt-1 max-w-2xl text-base font-semibold leading-relaxed text-ink-soft">
+              <p className="mt-1 max-w-2xl text-base font-semibold leading-relaxed text-ink-soft max-md:hidden">
                 Capture real mistakes from any mock test, mark them resolved as you master them, and review note cards on a real spaced schedule.
               </p>
             </div>
 
-            <div className="flex w-full flex-col gap-2 md:w-auto md:min-w-56">
+            <div className="flex w-full flex-col gap-2 md:w-auto md:min-w-56 max-md:grid max-md:grid-cols-2 max-md:gap-2">
               <button
                 onClick={() => setCaptureOpen(true)}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[16px] border border-line-strong bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-all hover:border-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-[3px] motion-safe:hover:scale-[1.03] motion-reduce:transform-none md:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[16px] border border-line-strong bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-all hover:border-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-[3px] motion-safe:hover:scale-[1.03] motion-reduce:transform-none md:w-auto max-md:min-h-10 max-md:rounded-lg max-md:border-slate-200/70 max-md:bg-white max-md:px-2 max-md:py-2 max-md:text-[13px]! max-md:font-semibold max-md:text-[#0f8b8d] max-md:dark:bg-[#111a2b] max-md:dark:text-teal-300 max-md:dark:border-slate-700/60"
               >
                 <Plus className="h-4 w-4" />
-                Capture Question
+                <span className="max-md:hidden">Capture Question</span>
+                <span className="md:hidden">Add mistake</span>
               </button>
               <button
                 onClick={startSprint}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[16px] border border-line-strong bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-all hover:border-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-0.5 motion-reduce:transform-none md:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[16px] border border-line-strong bg-surface-2 px-4 py-2.5 text-sm font-medium text-ink transition-all hover:border-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-0.5 motion-reduce:transform-none md:w-auto max-md:min-h-10 max-md:rounded-lg max-md:border-slate-200/70 max-md:bg-white max-md:px-2 max-md:py-2 max-md:text-[13px]! max-md:font-semibold max-md:text-slate-700 max-md:dark:bg-[#111a2b] max-md:dark:text-slate-200 max-md:dark:border-slate-700/60"
               >
                 <RotateCcw className="h-4 w-4" />
-                Start SRS Mistake Sprint
+                <span className="max-md:hidden">Start SRS Mistake Sprint</span>
+                <span className="md:hidden">Review due</span>
               </button>
             </div>
           </div>
@@ -262,34 +270,46 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 border-t-2 border-line pt-5 md:grid-cols-4">
-            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark:">
-              <div className="text-xs font-semibold text-ink-soft">Captured Questions</div>
-              <div className="mt-1 text-3xl tracking-wide text-ink">
+          <div className="grid grid-cols-2 gap-3 border-t-2 border-line pt-5 md:grid-cols-4 max-md:grid-cols-4 max-md:gap-1.5! max-md:border-t max-md:border-slate-200/70 max-md:pt-3 max-md:dark:border-slate-700/60">
+            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark: max-md:rounded-xl max-md:border max-md:border-slate-200/70 max-md:bg-white max-md:p-2 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+              <div className="text-xs font-semibold text-ink-soft max-md:text-[11px]! max-md:font-semibold max-md:leading-tight max-md:text-slate-500 max-md:dark:text-slate-400">
+                <span className="max-md:hidden">Captured Questions</span>
+                <span className="md:hidden">Saved</span>
+              </div>
+              <div className="mt-1 text-3xl tracking-wide text-ink max-md:mt-0.5 max-md:text-[19px]! max-md:font-bold max-md:tabular-nums">
                 {captured.length}
-                {usingSamples && <span className="block text-[10px] font-sans font-normal  ">sample rows shown</span>}
+                {usingSamples && <span className="block text-[10px] font-sans font-normal   max-md:hidden">sample rows shown</span>}
               </div>
             </div>
-            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark:">
-              <div className="text-xs font-semibold text-ink-soft">Remediated & Retested</div>
-              <div className="mt-1 text-3xl tracking-wide text-emerald-500">
+            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark: max-md:rounded-xl max-md:border max-md:border-slate-200/70 max-md:bg-white max-md:p-2 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+              <div className="text-xs font-semibold text-ink-soft max-md:text-[11px]! max-md:font-semibold max-md:leading-tight max-md:text-slate-500 max-md:dark:text-slate-400">
+                <span className="max-md:hidden">Remediated & Retested</span>
+                <span className="md:hidden">Fixed</span>
+              </div>
+              <div className="mt-1 text-3xl tracking-wide text-emerald-500 max-md:mt-0.5 max-md:text-[19px]! max-md:font-bold max-md:tabular-nums max-md:text-emerald-600 max-md:dark:text-emerald-400">
                 {stats.remediated}
-                <span className="ml-1 font-sans text-xs font-semibold text-emerald-600 dark:text-emerald-300">
+                <span className="ml-1 font-sans text-xs font-semibold text-emerald-600 dark:text-emerald-300 max-md:ml-0.5 max-md:text-[10px]!">
                   {stats.total ? ` (${Math.round((stats.remediated / stats.total) * 100)}%)` : ''}
                 </span>
               </div>
             </div>
-            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark:">
-              <div className="text-xs font-semibold text-ink-soft">Unresolved Misconceptions</div>
-              <div className="mt-1 text-3xl tracking-wide text-rose-500">
+            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark: max-md:rounded-xl max-md:border max-md:border-slate-200/70 max-md:bg-white max-md:p-2 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+              <div className="text-xs font-semibold text-ink-soft max-md:text-[11px]! max-md:font-semibold max-md:leading-tight max-md:text-slate-500 max-md:dark:text-slate-400">
+                <span className="max-md:hidden">Unresolved Misconceptions</span>
+                <span className="md:hidden">Open</span>
+              </div>
+              <div className="mt-1 text-3xl tracking-wide text-rose-500 max-md:mt-0.5 max-md:text-[19px]! max-md:font-bold max-md:tabular-nums max-md:text-rose-600 max-md:dark:text-rose-400">
                 {stats.unresolved}
-                {stats.unresolved > 0 && <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 font-sans text-[9px] font-medium uppercase tracking-wider text-white">Priority</span>}
+                {stats.unresolved > 0 && <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 font-sans text-[9px] font-medium uppercase tracking-wider text-white max-md:hidden">Priority</span>}
               </div>
             </div>
-            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark:">
-              <div className="text-xs font-semibold text-ink-soft">Due for Spaced Review Today</div>
-              <div className="mt-1 text-3xl tracking-wide text-amber-500">
-                {dueCount()} <span className="ml-1 font-sans text-xs font-semibold text-amber-600 dark:text-amber-300">Cards</span>
+            <div className="rounded-[16px] border border-line-strong bg-surface-2 p-3 dark: max-md:rounded-xl max-md:border max-md:border-slate-200/70 max-md:bg-white max-md:p-2 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+              <div className="text-xs font-semibold text-ink-soft max-md:text-[11px]! max-md:font-semibold max-md:leading-tight max-md:text-slate-500 max-md:dark:text-slate-400">
+                <span className="max-md:hidden">Due for Spaced Review Today</span>
+                <span className="md:hidden">Due</span>
+              </div>
+              <div className="mt-1 text-3xl tracking-wide text-amber-500 max-md:mt-0.5 max-md:text-[19px]! max-md:font-bold max-md:tabular-nums max-md:text-amber-600 max-md:dark:text-amber-400">
+                {dueCount()} <span className="ml-1 font-sans text-xs font-semibold text-amber-600 dark:text-amber-300 max-md:hidden">Cards</span>
               </div>
             </div>
           </div>
@@ -297,15 +317,15 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
       </div>
 
       {/* Main Grid: Left Questions List, Right Rails */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-md:gap-2.5!">
         {/* Left Column: Filter + Questions */}
-        <div className="lg:col-span-8 space-y-4">
+        <div className="lg:col-span-8 space-y-4 max-md:space-y-2.5">
           {/* Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface p-3.5 dark:">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface p-3.5 dark: max-md:gap-2 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-2 max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
             <div
               role="group"
               aria-label="Mistake status filter"
-              className="flex flex-wrap items-center gap-1.5"
+              className="flex flex-wrap items-center gap-1.5 max-md:min-w-0 max-md:flex-1 max-md:flex-nowrap max-md:gap-1.5 max-md:overflow-x-auto"
               onKeyDown={(e) => {
                 if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
                 const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-status-pill]'));
@@ -318,7 +338,7 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
                 buttons[nextIndex]?.focus();
               }}
             >
-              <span className="mr-1 flex items-center gap-1 text-xs font-semibold text-ink-soft">
+              <span className="mr-1 flex items-center gap-1 text-xs font-semibold text-ink-soft max-md:hidden">
                 <Filter className="w-3.5 h-3.5" /> Filter:
               </span>
               {(['ALL', 'UNRESOLVED', 'REMEDIATED'] as const).map(status => {
@@ -331,14 +351,14 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
                     tabIndex={active ? 0 : -1}
                     aria-pressed={active}
                     onClick={() => setFilterStatus(status)}
-                    className={`inline-flex items-center gap-2 rounded-[14px] px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 ${
+                    className={`inline-flex items-center gap-2 rounded-[14px] px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 max-md:h-[30px] max-md:shrink-0 max-md:gap-1.5 max-md:whitespace-nowrap max-md:rounded-full max-md:px-2.5 max-md:py-0 max-md:text-[11px]! ${
                       active
-                        ? 'border border-line-strong bg-[#001432] text-white shadow-sm'
-                        : 'border border-line bg-surface-2 text-ink-soft hover:border-line-strong hover:text-ink'
+                        ? 'border border-line-strong bg-[#001432] text-white shadow-sm max-md:border max-md:border-[#0f8b8d]/40 max-md:bg-[#0f8b8d]/10 max-md:text-[#0f8b8d] max-md:shadow-none max-md:dark:border-teal-400/40 max-md:dark:bg-teal-400/15 max-md:dark:text-teal-300'
+                        : 'border border-line bg-surface-2 text-ink-soft hover:border-line-strong hover:text-ink max-md:border max-md:border-slate-200 max-md:bg-white max-md:text-slate-600 max-md:dark:border-slate-700 max-md:dark:bg-[#111a2b] max-md:dark:text-slate-300'
                     }`}
                   >
                     {status === 'ALL' ? 'All Mistakes' : status === 'UNRESOLVED' ? 'Unresolved' : 'Remediated'}
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${active ? '' : 'bg-line/30'}`}>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] max-md:min-w-[16px] max-md:px-1 max-md:text-[11px]! max-md:font-semibold max-md:tabular-nums ${active ? 'max-md:bg-white/80 max-md:text-[#0f8b8d] max-md:dark:bg-teal-400/20 max-md:dark:text-teal-300' : 'bg-line/30 max-md:bg-slate-100 max-md:text-slate-500 max-md:dark:bg-slate-700/50 max-md:dark:text-slate-300'}`}>
                       {count}
                     </span>
                   </button>
@@ -350,7 +370,7 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
               <select
                 value={filterSubject}
                 onChange={e => setFilterSubject(e.target.value)}
-                className="min-h-10 rounded-[14px] border border-line bg-surface-2 px-3 py-2 text-sm font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2"
+                className="min-h-10 rounded-[14px] border border-line bg-surface-2 px-3 py-2 text-sm font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 max-md:h-[30px] max-md:min-h-0 max-md:rounded-full max-md:border-slate-200/70 max-md:bg-white max-md:px-2.5 max-md:py-0 max-md:text-[11px]! max-md:text-slate-600 max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60 max-md:dark:text-slate-300"
               >
                 <option value="ALL">All Disciplines</option>
                 {subjects.map((s) => (
@@ -361,8 +381,8 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
           </div>
 
           {captured.length === 0 && !showSample && (
-            <div className="relative overflow-hidden rounded-[20px] border border-dashed border-line bg-surface-2 p-8 text-center dark:">
-              <div className="relative mx-auto mb-3 flex h-16 w-16 items-center justify-center">
+            <div className="relative overflow-hidden rounded-[20px] border border-dashed border-line bg-surface-2 p-8 text-center dark: max-md:rounded-xl max-md:border-solid max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+              <div className="relative mx-auto mb-3 flex h-16 w-16 items-center justify-center max-md:hidden">
                 <div
                   aria-hidden="true"
                   className="pointer-events-none absolute inset-0 rounded-full opacity-[0.08]"
@@ -370,20 +390,20 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
                 />
                 <ClipboardPaste className="relative h-8 w-8 text-ink-soft" />
               </div>
-              <h3 className="text-sm font-medium text-ink">No real mistakes captured yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-ink-soft">
+              <h3 className="text-sm font-medium text-ink max-md:text-[13px]! max-md:font-semibold max-md:text-slate-700 max-md:dark:text-slate-200">No real mistakes captured yet</h3>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-ink-soft max-md:hidden">
                 Paste a screenshot from any mock test and structure it with your AI. Captured questions persist locally and feed the spaced-review deck.
               </p>
-              <div className="mt-4 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
+              <div className="mt-4 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center max-md:mt-2 max-md:flex-row max-md:justify-center max-md:gap-2">
                 <button
                   onClick={() => setCaptureOpen(true)}
-                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-[16px] px-4 py-2 text-xs font-medium  transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-0.5"
+                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-[16px] px-4 py-2 text-xs font-medium  transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 motion-safe:hover:-translate-y-0.5 max-md:min-h-9 max-md:rounded-lg max-md:bg-[#0f8b8d] max-md:px-3 max-md:py-1.5 max-md:text-[12px]! max-md:font-semibold max-md:text-white max-md:dark:bg-teal-500/20 max-md:dark:text-teal-300"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Capture Question
+                  <Plus className="w-3.5 h-3.5" /> <span className="max-md:hidden">Capture Question</span><span className="md:hidden">Add mistake</span>
                 </button>
                 <button
                   onClick={() => setShowSample(true)}
-                  className="inline-flex min-h-11 items-center justify-center rounded-[16px] border border-line bg-surface px-4 py-2 text-xs font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2"
+                  className="inline-flex min-h-11 items-center justify-center rounded-[16px] border border-line bg-surface px-4 py-2 text-xs font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible: focus-visible:ring-offset-2 max-md:min-h-9 max-md:rounded-lg max-md:border-slate-200/70 max-md:bg-white max-md:px-3 max-md:py-1.5 max-md:text-[12px]! max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60 max-md:dark:text-slate-300"
                 >
                   Show sample rows
                 </button>
@@ -657,43 +677,43 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
         </div>
 
         {/* Right Column: SRS Sprint, Root-Cause Breakdown, Due Today */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className="lg:col-span-4 space-y-6 max-md:space-y-2.5">
           {/* Quick Sprint Launcher */}
-          <div className="bg-gradient-to-br from-[#001432] to-[#13294b] text-white rounded-2xl p-5 border border-[#13294b] shadow-md">
-            <div className="flex items-center gap-2 text-[#8ff3f4] text-xs font-medium uppercase tracking-wider">
+          <div className="bg-gradient-to-br from-[#001432] to-[#13294b] text-white rounded-2xl p-5 border border-[#13294b] shadow-md max-md:rounded-xl max-md:border max-md:border-slate-200/70 max-md:bg-none max-md:bg-white max-md:p-3! max-md:text-slate-900 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:text-slate-100 max-md:dark:border-slate-700/60">
+            <div className="flex items-center gap-2 text-[#8ff3f4] text-xs font-medium uppercase tracking-wider max-md:text-[11px]! max-md:text-[#0f8b8d] max-md:dark:text-teal-300">
               <Target className="w-4 h-4" /> Spaced Repetition Sprint
             </div>
-            <h3 className="text-base font-medium mt-1 text-white">
+            <h3 className="text-base font-medium mt-1 text-white max-md:mt-0.5 max-md:text-[15px]! max-md:font-semibold max-md:text-slate-900 max-md:dark:text-slate-100">
               Fix 10 Recurring Traps
             </h3>
-            <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+            <p className="text-xs text-slate-300 mt-1 leading-relaxed max-md:hidden">
               Curated by error frequency. High-yield items where you scored &lt;50% accuracy or picked the top distractor.
             </p>
-            <div className="mt-4 flex items-center justify-between text-xs font-mono text-slate-300 pb-3 border-b border-slate-700">
+            <div className="mt-4 flex items-center justify-between text-xs font-mono text-slate-300 pb-3 border-b border-slate-700 max-md:mt-2 max-md:pb-2 max-md:font-sans max-md:text-[11px]! max-md:text-slate-500 max-md:border-slate-200 max-md:dark:text-slate-400 max-md:dark:border-slate-700">
               <span>Time Target: 12 min</span>
-              <span className="text-[#8ff3f4]">Penalty: Board Rules</span>
+              <span className="text-[#8ff3f4] max-md:text-[#0f8b8d] max-md:dark:text-teal-300">Penalty: Board Rules</span>
             </div>
             <button
               onClick={startSprint}
-              className="w-full mt-4 py-2.5 bg-[#0f8b8d] hover:bg-[#00696b] text-white text-xs font-medium rounded-xl transition-all flex items-center justify-center gap-2"
+              className="w-full mt-4 py-2.5 bg-[#0f8b8d] hover:bg-[#00696b] text-white text-xs font-medium rounded-xl transition-all flex items-center justify-center gap-2 max-md:mt-2.5 max-md:min-h-10 max-md:rounded-lg max-md:py-2 max-md:text-[12px]!"
             >
-              Launch Targeted Sprint <ArrowRight className="w-3.5 h-3.5" />
+              <span className="max-md:hidden">Launch Targeted Sprint</span><span className="md:hidden">Start review</span> <ArrowRight className="w-3.5 h-3.5" />
             </button>
             {/* Sprint errors are surfaced in the hero alert. */}
           </div>
 
           {/* Root Cause Attribution Breakdown — computed from real attempts & captures */}
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-medium text-slate-900 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-[#0f8b8d]" /> Mistake Attribution Breakdown
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm max-md:rounded-xl max-md:border-slate-200/70 max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:dark:bg-[#111a2b] max-md:dark:border-slate-700/60">
+            <h3 className="text-sm font-medium text-slate-900 flex items-center gap-2 max-md:text-[15px]! max-md:font-semibold max-md:dark:text-slate-100">
+              <Layers className="w-4 h-4 text-[#0f8b8d]" /> <span className="max-md:hidden">Mistake Attribution Breakdown</span><span className="md:hidden">Weak areas</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5 max-md:text-[12px]! max-md:text-slate-500 max-md:dark:text-slate-400">
               {attemptStats.questionsAnswered > 0
                 ? `Built from ${attemptStats.questionsAnswered} answered questions in ${attemptStats.modules} real module${attemptStats.modules === 1 ? '' : 's'}`
                 : 'No attempts recorded yet — submit a module or capture a mistake to populate this'}
             </p>
 
-            <div className="mt-4 space-y-3.5">
+            <div className="mt-4 space-y-3.5 max-md:mt-3 max-md:space-y-2">
               {attemptStats.weakSubjects.length === 0 && captured.length === 0 && (
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Once you answer questions, your weakest subjects and their accuracy appear here. Nothing is simulated.

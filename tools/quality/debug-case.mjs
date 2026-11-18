@@ -8,8 +8,8 @@ try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(process.arg
 const mk = (m) => ({ getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); }, key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; } });
 globalThis.localStorage = mk(store);
 globalThis.sessionStorage = mk(new Map());
-store.set('ai.activeProvider', process.argv[4] || 'opencode');
-store.set('ai.model.opencode', 'deepseek-v4.1-flash');
+store.set('ai.activeProvider', process.argv[4] || 'deeprelay');
+store.set('ai.model.deeprelay', 'deeprelay/deepseek-v4.1-flash');
 const realFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = (i, init) => realFetch(typeof i === 'string' && i.startsWith('/') ? BASE + i : i, init);
 

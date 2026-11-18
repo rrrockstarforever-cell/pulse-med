@@ -23,6 +23,8 @@ export interface GenerateFromImageOptions {
   apiKey: string;
   model: string;
   timeoutMs?: number;
+  /** For ChatGPT, Claude and Grok: returns the model's reply text for one picture; used instead of url and apiKey. */
+  complete?: (input: { system: string; instruction: string; dataUrl: string }) => Promise<string>;
 }
 
 export declare function buildImageQuestionInstruction(input: {

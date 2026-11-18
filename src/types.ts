@@ -3,6 +3,7 @@ export type ExamType = 'NEET_PG' | 'INI_CET';
 export type AppView =
   | 'analytics'
   | 'practice'
+  | 'pyq-topics'
   | 'question-bank'
   | 'test-runner'
   | 'mistakes'
@@ -11,9 +12,9 @@ export type AppView =
   | 'pdf-reader'
   | 'research'
   | 'settings'
-  | 'image-review'
   | 'qa'
   | 'study-plan'
+  | 'bank-plan'
   | 'syllabus'
   | 'reminders'
   | 'sync'
@@ -59,9 +60,11 @@ export interface ClinicalQuestion {
   imageSourceUrl?: string;
   /** Bank/source id of the attached figure (never an LLM-written URL). */
   imageId?: string;
-  /** License label of the attached figure, expected to be CC0 or Public Domain. */
+  /** License label of the attached figure, CC0, Public Domain, CC BY or CC BY-SA (credited in the caption). */
   imageLicence?: string;
   imageLicenceUrl?: string;
+  /** Author / source credit of the attached figure, shown beside the licence (CC BY and CC BY-SA require it). */
+  imageCredit?: string;
   /** Ground-truth finding the figure was verified to show (the claim checked by vision). */
   imageGroundTruth?: string;
   /** Result of the strict vision check that had to pass before this image was attached. */
@@ -148,7 +151,7 @@ export interface AvailableModel {
 export interface AIProvider {
   id: string;
   name: string;
-  brand: 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek' | 'ollama' | 'opencode';
+  brand: 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek' | 'ollama';
   model: string;
   availableModels: AvailableModel[];
   status: 'active' | 'connected' | 'ready' | 'offline_ready' | 'standby';

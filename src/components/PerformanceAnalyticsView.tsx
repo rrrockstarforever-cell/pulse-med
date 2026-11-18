@@ -1,3 +1,4 @@
+import { WEAK_BELOW } from '../lib/testReview.ts';
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
@@ -144,7 +145,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
     return arr.sort((a, b) => b.solved - a.solved);
   }, [subjectRows, sortBy]);
 
-  const weakSubjects = summary.weakSubjects.filter(w => w.accuracy < 70).slice(0, 5);
+  const weakSubjects = summary.weakSubjects.filter(w => w.accuracy < WEAK_BELOW).slice(0, 5);
 
   const handleExportPDF = () => {
     setDownloadSuccess(true);
@@ -162,9 +163,9 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
   const cohortAccuracy = cohortQuestions > 0 ? Math.round((cohortCorrect / cohortQuestions) * 100) : null;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6 text-[16px] leading-[1.7] text-slate-900 dark:text-slate-100">
+    <div className="p-6 max-w-7xl mx-auto space-y-6 text-[16px] leading-[1.7] text-slate-900 dark:text-slate-100 max-md:space-y-2.5 max-md:text-[14px]! max-md:leading-[1.5] max-md:p-0! max-md:border-0 max-md:rounded-none max-md:bg-transparent max-md:shadow-none">
       {/* Top Header & Cohort Switcher */}
-      <div className="relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
+      <div className="relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:hidden">
         <div className="pointer-events-none absolute inset-0  [background-size:8px_8px] opacity-[0.08] " />
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -192,7 +193,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               onClick={() => setActiveCohort('NEET_PG')}
               className={`min-h-[44px] rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-wider transition-all ${
                 activeCohort === 'NEET_PG'
-                              ? 'border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm'
+                  ? 'border border-[#0f8b8d] bg-[#0f8b8d] font-semibold text-white shadow-sm dark:border-teal-500 dark:bg-[#0f8b8d] dark:text-white'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
               }`}
             >
@@ -202,7 +203,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               onClick={() => setActiveCohort('INI_CET')}
               className={`min-h-[44px] rounded-xl px-4 py-2 text-xs font-medium uppercase tracking-wider transition-all ${
                 activeCohort === 'INI_CET'
-                              ? 'border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm'
+                  ? 'border border-[#0f8b8d] bg-[#0f8b8d] font-semibold text-white shadow-sm dark:border-teal-500 dark:bg-[#0f8b8d] dark:text-white'
                   : 'border border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
               }`}
             >
@@ -212,30 +213,58 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         </div>
       </div>
 
+      {/* Phone: compact title + exam switcher */}
+      <div className="md:hidden flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-700/60 dark:bg-[#111a2b]">
+        <span className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">Your progress</span>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-slate-100 p-0.5 dark:bg-slate-800/60">
+          <button
+            onClick={() => setActiveCohort('NEET_PG')}
+            className={`h-8 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+              activeCohort === 'NEET_PG'
+                ? 'bg-[#0f8b8d] text-white'
+                : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            NEET PG
+          </button>
+          <button
+            onClick={() => setActiveCohort('INI_CET')}
+            className={`h-8 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+              activeCohort === 'INI_CET'
+                ? 'bg-[#0f8b8d] text-white'
+                : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            INI-CET
+          </button>
+        </div>
+      </div>
+
       {/* 4-Stat Metric Row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 max-md:grid-cols-2 max-md:gap-2.5">
         {/* Coverage Velocity */}
-        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] " />
-          <div className="relative flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300">
-            <span>Coverage Velocity</span>
-            <span className="rounded-full border-2 border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-slate-600 dark:border-slate-600 dark:bg-[#0a1220] dark:text-slate-100">
+        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:min-h-0 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] max-md:hidden" />
+          <div className="relative flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300 max-md:gap-1 max-md:tracking-[0.06em] max-md:text-slate-500 dark:max-md:text-slate-400">
+            <span className="max-md:hidden">Coverage Velocity</span>
+            <span className="md:hidden">Questions done</span>
+            <span className="rounded-full border-2 border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-slate-600 dark:border-slate-600 dark:bg-[#0a1220] dark:text-slate-100 max-md:hidden">
               From saved attempts
             </span>
           </div>
-          <div className="relative mt-4 flex items-baseline gap-1.5">
-            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100">
+          <div className="relative mt-4 flex items-baseline gap-1.5 max-md:mt-1.5 max-md:gap-1">
+            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums">
               {cohortHasData ? cohortQuestions.toLocaleString() : '—'}
             </span>
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 max-md:hidden">
               questions in {activeCohort}
             </span>
           </div>
-          <p className="relative mt-2 text-xs text-slate-600 dark:text-slate-300">
+          <p className="relative mt-2 text-xs text-slate-600 dark:text-slate-300 max-md:hidden">
             Saved answers from completed practice modules for the active cohort.
           </p>
-          <div className="relative mt-3 border-t-2 border-slate-200 pt-2 dark:border-slate-700">
-            <div className="flex items-center justify-between text-xs font-semibold">
+          <div className="relative mt-3 border-t-2 border-slate-200 pt-2 dark:border-slate-700 max-md:mt-2 max-md:border-t max-md:border-slate-200/70 max-md:pt-1.5 dark:max-md:border-slate-700/60">
+            <div className="flex items-center justify-between text-xs font-semibold max-md:text-[12px]! max-md:text-slate-500 dark:max-md:text-slate-400">
               <span className={cohortAccuracy !== null ? 'text-[#1f9d55] dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}>
                 {cohortAccuracy !== null ? `${cohortAccuracy}% accuracy` : 'No answers marked yet'}
               </span>
@@ -244,13 +273,13 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               </span>
             </div>
             {!cohortHasData && (
-              <div className="mt-2">
+              <div className="mt-2 max-md:hidden">
               <p className="text-xs text-slate-600 dark:text-slate-300">
                   Finish a practice set for {activeCohort} and your results will show here.
                 </p>
                 <button
                   onClick={() => onNavigate('practice')}
-                  className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                  className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d]"
                 >
                   Start practice
                 </button>
@@ -260,14 +289,15 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         </Card>
 
         {/* Cumulative Accuracy */}
-        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] " />
-          <div className="relative flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300">
-            <span>Cumulative Accuracy</span>
-            <ShieldCheck className="h-4 w-4 text-[#0f8b8d] dark:text-teal-300" />
+        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:min-h-0 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] max-md:hidden" />
+          <div className="relative flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300 max-md:tracking-[0.06em] max-md:text-slate-500 dark:max-md:text-slate-400">
+            <span className="max-md:hidden">Cumulative Accuracy</span>
+            <span className="md:hidden">Accuracy</span>
+            <ShieldCheck className="h-4 w-4 text-[#0f8b8d] dark:text-teal-300 max-md:h-3.5 max-md:w-3.5" />
           </div>
-          <div className="relative mt-4 flex items-center gap-2">
-            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100">
+          <div className="relative mt-4 flex items-center gap-2 max-md:mt-1.5">
+            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums">
               {cohortAccuracy !== null ? `${cohortAccuracy}%` : '—'}
             </span>
             {cohortAccuracy !== null && cohortAccuracy >= 70 && (
@@ -276,7 +306,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               </span>
             )}
           </div>
-          <p className="relative mt-2 text-xs text-slate-600 dark:text-slate-300">
+          <p className="relative mt-2 text-xs text-slate-600 dark:text-slate-300 max-md:hidden">
             {cohortAccuracy !== null
               ? `Based on ${cohortQuestions.toLocaleString()} saved answers for ${activeCohort}`
               : `No saved answers yet for ${activeCohort}. Finish a practice set to see your overall accuracy.`}
@@ -284,12 +314,12 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
           {cohortAccuracy === null && (
             <button
               onClick={() => onNavigate('practice')}
-              className="  relative mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+              className="  relative mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:hidden"
             >
               Start practice
             </button>
           )}
-          <div className="relative mt-3 flex items-center gap-3 border-t-2 border-slate-200 pt-2 text-xs font-semibold dark:border-slate-700">
+          <div className="relative mt-3 flex items-center gap-3 border-t-2 border-slate-200 pt-2 text-xs font-semibold dark:border-slate-700 max-md:mt-2 max-md:gap-2 max-md:border-t max-md:border-slate-200/70 max-md:pt-1.5 max-md:text-[12px]! dark:max-md:border-slate-700/60">
             {cohortHasData ? (
               <>
                 <span className="flex items-center gap-1 text-slate-900 dark:text-slate-100">
@@ -306,7 +336,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                 <span className="text-slate-600 dark:text-slate-300">No answers marked yet for {activeCohort}.</span>
                 <button
                   onClick={() => onNavigate('practice')}
-                  className="  px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                  className="  px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:hidden"
                 >
                   Practice now
                 </button>
@@ -316,31 +346,41 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         </Card>
 
         {/* Response Partition */}
-        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] " />
-          <div className="relative flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300">
-            <span>Response Partition</span>
-            <PieChart className="h-4 w-4 text-slate-600 dark:text-slate-300" />
+        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:min-h-0 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] max-md:hidden" />
+          <div className="relative flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300 max-md:tracking-[0.06em] max-md:text-slate-500 dark:max-md:text-slate-400">
+            <span className="max-md:hidden">Response Partition</span>
+            <span className="md:hidden">Right / wrong</span>
+            <PieChart className="h-4 w-4 text-slate-600 dark:text-slate-300 max-md:h-3.5 max-md:w-3.5" />
           </div>
-          <div className="relative mt-4 grid grid-cols-3 gap-2 text-center">
+          <div className="relative mt-4 grid grid-cols-3 gap-2 text-center max-md:mt-1.5 max-md:gap-1.5">
             <div>
-              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Correct</div>
-              <div className=" text-2xl text-[#1f9d55] dark:text-emerald-400">
+              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 max-md:text-[11px]! max-md:leading-none">
+                <span className="max-md:hidden">Correct</span>
+                <span className="md:hidden">Right</span>
+              </div>
+              <div className=" text-2xl text-[#1f9d55] dark:text-emerald-400 max-md:mt-1 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums max-md:leading-none">
                 {cohortHasData ? cohortCorrect.toLocaleString() : '—'}
               </div>
             </div>
             <div>
-              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Incorrect</div>
-              <div className=" text-2xl text-rose-600">
+              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 max-md:text-[11px]! max-md:leading-none">
+                <span className="max-md:hidden">Incorrect</span>
+                <span className="md:hidden">Wrong</span>
+              </div>
+              <div className=" text-2xl text-rose-600 max-md:mt-1 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums max-md:leading-none">
                 {cohortHasData ? cohortWrong.toLocaleString() : '—'}
               </div>
             </div>
             <div>
-              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Skipped</div>
-              <div className=" text-2xl text-amber-600">—</div>
+              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 max-md:text-[11px]! max-md:leading-none">
+                <span className="max-md:hidden">Skipped</span>
+                <span className="md:hidden">Skip</span>
+              </div>
+              <div className=" text-2xl text-amber-600 max-md:mt-1 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums max-md:leading-none">—</div>
             </div>
           </div>
-          <div className="relative mt-4 flex h-3 w-full overflow-hidden rounded-full border-2 border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-[#0a1220]">
+          <div className="relative mt-4 flex h-3 w-full overflow-hidden rounded-full border-2 border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-[#0a1220] max-md:mt-2 max-md:h-2 max-md:border">
             {cohortAccuracy !== null && (
               <>
                 <div className="h-full bg-emerald-500" style={{ width: `${cohortAccuracy}%` }} title={`Correct: ${cohortAccuracy}%`}></div>
@@ -348,26 +388,27 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               </>
             )}
           </div>
-          <p className="relative mt-2 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+          <p className="relative mt-2 text-[11px] font-medium text-slate-600 dark:text-slate-300 max-md:hidden">
             Skipped data is not tracked in saved attempts.
           </p>
         </Card>
 
         {/* Exam Countdown */}
-        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] " />
-          <div className="relative flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300">
-            <span>Exam Countdown</span>
+        <Card className="relative min-h-[190px] overflow-hidden rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:min-h-0 max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] max-md:hidden" />
+          <div className="relative flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:text-slate-300 max-md:gap-1 max-md:tracking-[0.06em] max-md:text-slate-500 dark:max-md:text-slate-400">
+            <span className="max-md:hidden">Exam Countdown</span>
+            <span className="md:hidden">Exam in</span>
             <span className="rounded-full border-2 border-slate-200 bg-amber-100 px-2 py-0.5 text-[10px] font-medium tracking-normal text-slate-900 dark:border-slate-700">
               {activeCohort}
             </span>
           </div>
-          <div className="relative mt-4 flex items-baseline gap-2">
-            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100">
+          <div className="relative mt-4 flex items-baseline gap-2 max-md:mt-1.5">
+            <span className=" text-5xl leading-none tracking-wide text-slate-900 dark:text-slate-100 max-md:text-[20px]! max-md:font-bold max-md:tabular-nums">
               {daysToExam !== null && daysToExam > 0 ? `${daysToExam}d` : daysToExam !== null && daysToExam <= 0 ? 'TODAY' : '—'}
             </span>
           </div>
-          <p className="relative mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <p className="relative mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300 max-md:hidden">
             {examDate
               ? daysToExam !== null && daysToExam > 0
                 ? `${daysToExam} days until ${activeCohort} (${formatDateForCountdown(examDate)})`
@@ -376,17 +417,20 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                 : `No exam date set for ${activeCohort}. Add it in Sidebar to see the countdown.`
               : `No exam date set for ${activeCohort}. Add it in Sidebar to see the countdown.`}
           </p>
-          <div className="relative mt-3 border-t-2 border-slate-200 pt-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:text-slate-100">
+          <p className="md:hidden relative mt-1 text-[12px] text-slate-500 dark:text-slate-400">
+            {examDate ? `${formatDateForCountdown(examDate)}` : `No exam date set`}
+          </p>
+          <div className="relative mt-3 border-t-2 border-slate-200 pt-2 text-xs font-semibold text-slate-900 dark:border-slate-700 dark:text-slate-100 max-md:mt-2 max-md:border-t max-md:border-slate-200/70 max-md:pt-1.5 max-md:text-[12px]! dark:max-md:border-slate-700/60">
             <div className="flex items-center gap-1.5">
               <Trophy className="h-3.5 w-3.5 text-amber-600" />
               {cohortAccuracy !== null ? `Cohort accuracy: ${cohortAccuracy}%` : 'No answers yet for this cohort'}
             </div>
             {cohortAccuracy === null && (
-              <div className="mt-2">
+              <div className="mt-2 max-md:hidden">
                 <p className="text-xs text-slate-600 dark:text-slate-300">Finish a practice set to see cohort accuracy.</p>
                 <button
                   onClick={() => onNavigate('practice')}
-                  className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                  className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d]"
                 >
                   Start practice
                 </button>
@@ -396,28 +440,40 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         </Card>
       </div>
 
+      {!cohortHasData && (
+        <button
+          onClick={() => onNavigate('practice')}
+          className="md:hidden w-full rounded-xl bg-[#0f8b8d] px-3 py-2.5 text-[14px] font-semibold text-white active:bg-[#0b6b6d] dark:bg-teal-600 dark:text-white"
+        >
+          Start practice
+        </button>
+      )}
+
       {/* Main Split: Subject Accuracy Table (Left) + Difficulty & Synthesis Insights (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column (2 Cols wide): Specialty & Subject Table */}
-        <div className="lg:col-span-2 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-          <div className="flex flex-col gap-3 border-b-2 border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
+        <div className="lg:col-span-2 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+          <div className="flex flex-col gap-3 border-b-2 border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700 max-md:gap-2 max-md:border-b max-md:border-slate-200/70 max-md:pb-2 dark:max-md:border-slate-700/60">
             <div>
-              <div className="mb-1 inline-flex rounded-md border border-slate-200 bg-teal-50 px-2 py-0.5 text-xs uppercase tracking-[0.16em] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm">
+              <div className="mb-1 inline-flex rounded-md border border-slate-200 bg-teal-50 px-2 py-0.5 text-xs uppercase tracking-[0.16em] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm max-md:hidden">
                 Subject Matrix
               </div>
-              <h2 className=" text-2xl font-medium text-slate-900 dark:text-slate-100">
+              <h2 className=" text-2xl font-medium text-slate-900 dark:text-slate-100 max-md:hidden">
                 Specialty & Subject Accuracy Table
               </h2>
-              <p className="text-sm text-slate-600 dark:text-slate-300">
+              <h2 className="md:hidden text-[15px] font-semibold text-slate-900 dark:text-slate-100">
+                Subject accuracy
+              </h2>
+              <p className="text-sm text-slate-600 dark:text-slate-300 max-md:hidden">
                 Continuous mastery tracking from saved {activeCohort} attempts
               </p>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-semibold text-slate-600 dark:text-slate-300">SORT BY:</span>
+              <span className="font-semibold text-slate-600 dark:text-slate-300 max-md:hidden">SORT BY:</span>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="min-h-[44px] rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:ring-4 focus:ring-[#8EC5FC]/30 dark:border-slate-600 dark:bg-[#0a1220] dark:text-slate-100"
+                className="min-h-[44px] rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:ring-4 focus:ring-[#8EC5FC]/30 dark:border-slate-600 dark:bg-[#0a1220] dark:text-slate-100 max-md:min-h-0! max-md:rounded-lg max-md:border max-md:border-slate-200/70 max-md:bg-white max-md:px-2 max-md:py-1 max-md:text-[12px]! max-md:text-slate-600 dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b] dark:max-md:text-slate-300"
               >
                 <option value="lowest">Lowest Accuracy</option>
                 <option value="highest">Highest Accuracy</option>
@@ -426,14 +482,14 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
             </div>
           </div>
 
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-[15px] leading-6">
-              <thead>
+          <div className="mt-3 overflow-x-auto max-md:mt-2 max-md:-mx-3 max-md:px-3">
+            <table className="w-full min-w-[760px] text-left text-[15px] leading-6 max-md:min-w-0 max-md:text-[12px]! max-md:leading-[1.4] max-md:[&_th]:px-2 max-md:[&_th]:py-1.5 max-md:[&_td]:px-2 max-md:[&_td]:py-1.5">
+              <thead className={!cohortHasData || sortedSubjects.length === 0 ? 'max-md:hidden' : ''}>
                 <tr className="border-b-2 border-slate-200/30 text-[11px] font-medium uppercase tracking-wider text-slate-600 dark:border-slate-700 dark:text-slate-300">
                   <th className="px-3 py-2.5">Subject</th>
                   <th className="px-3 py-2.5">Solved / Wrong</th>
                   <th className="px-3 py-2.5">Accuracy Band</th>
-                  <th className="px-3 py-2.5">Evaluation</th>
+                  <th className="px-3 py-2.5 max-md:hidden">Evaluation</th>
                   <th className="px-3 py-2.5 text-right">Action</th>
                 </tr>
               </thead>
@@ -442,16 +498,16 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                   sortedSubjects.map((sub) => (
                     <tr key={sub.name} className="transition-colors hover:bg-slate-100/80 dark:hover:bg-[#090F12]/60">
                       <td className="px-3 py-3">
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{sub.name}</div>
-                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300">{sub.sub}</div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 max-md:text-[12px]!">{sub.name}</div>
+                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300 max-md:hidden">{sub.sub}</div>
                       </td>
                       <td className="px-3 py-3">
-                        <div className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">{sub.solved} Qs</div>
-                        <div className="font-mono text-[11px] font-semibold text-rose-600">
+                        <div className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100 max-md:font-sans max-md:text-[12px]!">{sub.solved} Qs</div>
+                        <div className="font-mono text-[11px] font-semibold text-rose-600 max-md:font-sans">
                           {sub.incorrect} Incorrect
                         </div>
                       </td>
-                      <td className="min-w-36 px-3 py-3">
+                      <td className="min-w-36 px-3 py-3 max-md:min-w-0">
                         <div className="flex items-center gap-2">
                           <div className="h-3 flex-1 overflow-hidden rounded-full border-2 border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-[#0a1220]">
                             <div
@@ -464,7 +520,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                           </span>
                         </div>
                       </td>
-                      <td className="px-3 py-3">
+                      <td className="px-3 py-3 max-md:hidden">
                         <span
                           className={`inline-flex items-center rounded-md border-2 px-2 py-0.5 text-[11px] font-medium ${
                             sub.status === 'Red Flag' || sub.status === 'Needs Focus'
@@ -482,30 +538,34 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                         <button
                           onClick={() => onLaunchRemediation(sub.name)}
                           title="Opens the Question Bank filtered to this subject"
-                          className={`min-h-[40px] rounded-xl border px-3 py-1.5 text-xs font-medium transition-all ${
+                          className={`min-h-[40px] rounded-xl border px-3 py-1.5 text-xs font-medium transition-all max-md:min-h-0! max-md:rounded-lg max-md:px-2 max-md:py-1 max-md:text-[11px]! ${
                             sub.accuracy < 65
                               ? 'border-slate-200 bg-rose-100 text-slate-900 shadow-sm hover:bg-rose-200 dark:border-slate-700 shadow-sm'
-                              : 'border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm'
+                              : 'border-[#0f8b8d] bg-[#0f8b8d] text-white hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d]'
                           }`}
                         >
-                          Remediate
+                          <span className="max-md:hidden">Remediate</span>
+                          <span className="md:hidden">Fix</span>
                         </button>
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="px-3 py-8">
-                      <div className="mx-auto max-w-md rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm text-center">
-                        <div className=" text-lg uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                    <td colSpan={5} className="px-3 py-8 max-md:py-3">
+                      <div className="mx-auto max-w-md rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm text-center max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0 max-md:text-left max-md:shadow-none dark:max-md:bg-transparent">
+                        <div className=" text-lg uppercase tracking-wider text-slate-900 dark:text-slate-100 max-md:hidden">
                           No marked questions yet
                         </div>
-                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 max-md:hidden">
                           You have not finished a practice set for {activeCohort} yet. Finish one to fill this table.
+                        </p>
+                        <p className="md:hidden mt-0 text-[12px] text-slate-500 dark:text-slate-400">
+                          No practice sets finished yet.
                         </p>
                         <button
                           onClick={() => onNavigate('practice')}
-                          className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                          className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:hidden max-md:mt-2 max-md:rounded-lg max-md:px-3 max-md:py-1.5 max-md:text-[12px]! max-md:font-semibold max-md:text-white"
                         >
                           Start practice
                         </button>
@@ -521,7 +581,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         {/* Right Column (1 Col wide): Weak Subjects & Synthesis Cards */}
         <div className="space-y-4">
           {/* Weak Subjects Card (from summarizeAttempts) */}
-          <div className="relative overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
+          <div className="relative overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:hidden">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-16  [background-size:8px_8px] opacity-[0.08] " />
             <div className="relative">
               <h3 className=" text-xl font-medium text-slate-900 dark:text-slate-100">Weak Subjects (All-time Focus Areas)</h3>
@@ -569,7 +629,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                   {!hasData && (
                     <button
                       onClick={() => onNavigate('practice')}
-                      className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                      className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d]"
                     >
                       Start practice
                     </button>
@@ -580,7 +640,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
           </div>
 
           {/* Cognitive Synthesis Insight Callout */}
-          <div className="rounded-[20px] border border-slate-200 bg-slate-100 p-4 shadow-sm dark:border-slate-600 dark:bg-[#0a1220] shadow-sm">
+          <div className="rounded-[20px] border border-slate-200 bg-slate-100 p-4 shadow-sm dark:border-slate-600 dark:bg-[#0a1220] shadow-sm max-md:hidden">
             <div className="flex items-start gap-2.5">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border-2 border-slate-200 bg-amber-100 text-slate-900 dark:border-slate-700">
                 <Lightbulb className="h-4 w-4" />
@@ -597,7 +657,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                 {!hasData && (
                   <button
                     onClick={() => onNavigate('practice')}
-                    className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                    className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d]"
                   >
                     Start practice
                   </button>
@@ -609,15 +669,15 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
           {/* Mistake Notebook Sync Action Card */}
           <div
             onClick={() => onNavigate('mistakes')}
-            className="group flex cursor-pointer items-center justify-between rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm"
+            className="group flex cursor-pointer items-center justify-between rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]"
           >
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border-2 border-slate-200 bg-teal-50 text-slate-900 transition-transform group-hover:scale-105 dark:border-slate-700">
-                <FileCheck className="h-5 w-5" />
+            <div className="flex items-center gap-3 max-md:gap-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border-2 border-slate-200 bg-teal-50 text-slate-900 transition-transform group-hover:scale-105 dark:border-slate-700 max-md:h-7 max-md:w-7 max-md:rounded-full max-md:border-0 max-md:bg-[#0f8b8d]/10 max-md:text-[#0f8b8d] dark:max-md:bg-teal-400/10 dark:max-md:text-teal-300">
+                <FileCheck className="h-5 w-5 max-md:h-4 max-md:w-4" />
               </div>
               <div>
-                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">Mistake Notebook Sync</div>
-                <div className="text-xs text-slate-600 dark:text-slate-300">
+                <div className="text-sm font-medium text-slate-900 dark:text-slate-100 max-md:text-[15px]! max-md:font-semibold">Mistake notebook</div>
+                <div className="text-xs text-slate-600 dark:text-slate-300 max-md:text-[12px]! max-md:text-slate-500 dark:max-md:text-slate-400">
                   {hasData
                     ? `${summary.questionsAnswered - summary.correct} questions queued for spaced review`
                     : 'No mistakes saved yet. Finish a practice set and wrong answers will appear here.'}
@@ -625,31 +685,35 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                 {!hasData && (
                   <button
                     onClick={() => onNavigate('mistakes')}
-                    className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                    className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:hidden"
                   >
                     Open mistakes
                   </button>
                 )}
               </div>
             </div>
-            <ArrowRight className="h-4 w-4 text-slate-600 transition-all group-hover:translate-x-1 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-[#EEEEED]" />
+            <span className="md:hidden shrink-0 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-semibold text-[#0f8b8d] dark:border-slate-700 dark:text-teal-300">
+              Open
+            </span>
+            <ArrowRight className="h-4 w-4 text-slate-600 transition-all group-hover:translate-x-1 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-[#EEEEED] max-md:hidden" />
           </div>
         </div>
       </div>
 
       {/* Bottom Section: Recent Completed Modules History (from real attempts) */}
-      <div className="overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm">
-        <div className="flex flex-col gap-3 border-b-2 border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
+      <div className="overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm max-md:rounded-xl max-md:border-slate-200/70 max-md:bg-white max-md:p-3! max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:max-md:border-slate-700/60 dark:max-md:bg-[#111a2b]">
+        <div className="flex flex-col gap-3 border-b-2 border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700 max-md:gap-2 max-md:border-b max-md:border-slate-200/70 max-md:pb-2 dark:max-md:border-slate-700/60">
           <div>
-            <div className="mb-1 inline-flex rounded-md border border-slate-200 bg-teal-50 px-2 py-0.5 text-xs uppercase tracking-[0.16em] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm">
+            <div className="mb-1 inline-flex rounded-md border border-slate-200 bg-teal-50 px-2 py-0.5 text-xs uppercase tracking-[0.16em] text-slate-900 shadow-sm dark:border-slate-700 shadow-sm max-md:hidden">
               History
             </div>
-            <h3 className=" text-2xl font-medium text-slate-900 dark:text-slate-100">Recent Completed Modules History</h3>
-            <p className="text-sm text-slate-600 dark:text-slate-300">Log of recently completed mock tests, timed blocks, and tutor sessions</p>
+            <h3 className=" text-2xl font-medium text-slate-900 dark:text-slate-100 max-md:hidden">Recent Completed Modules History</h3>
+            <h3 className="md:hidden text-[15px] font-semibold text-slate-900 dark:text-slate-100">Recent tests</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 max-md:hidden">Log of recently completed mock tests, timed blocks, and tutor sessions</p>
           </div>
           <button
             onClick={handleExportPDF}
-            className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-[#0f8b8d] px-4 py-2 text-sm font-medium text-slate-900 shadow-sm transition-all hover:brightness-105 focus:outline-none focus:ring-4 focus:ring-[#8EC5FC]/30 dark:border-slate-700 shadow-sm"
+            className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl border border-[#0f8b8d] bg-[#0f8b8d] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] focus:outline-none focus:ring-4 focus:ring-[#8EC5FC]/30 dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:min-h-0! max-md:w-fit max-md:gap-1 max-md:rounded-full max-md:border max-md:border-slate-200/70 max-md:bg-transparent max-md:px-2.5 max-md:py-1 max-md:text-[11px]! max-md:font-semibold max-md:text-[#0f8b8d] max-md:shadow-none dark:max-md:border-slate-700/60 dark:max-md:bg-transparent dark:max-md:text-teal-300"
           >
             <Download className="h-4 w-4" />
             <span>{downloadSuccess ? 'Export ready' : 'Export summary'}</span>
@@ -665,9 +729,9 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : Math.min(idx * 0.03, 0.2) }}
               >
-                <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between max-md:gap-1 max-md:py-2">
                   <div>
-                    <div className="font-mono text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    <div className="font-mono text-[11px] font-semibold text-slate-600 dark:text-slate-300 max-md:font-sans max-md:text-slate-500 dark:max-md:text-slate-400">
                       {new Date(a.at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
@@ -680,7 +744,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
                         {a.mode}
                       </span>
                     </div>
-                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                    <div className="text-xs text-slate-600 dark:text-slate-300 max-md:hidden">
                       {Object.entries(a.subjects)
                         .map(([s, v]) => `${s}: ${v.correct}/${v.total}`)
                         .join(', ')}
@@ -706,17 +770,17 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
               </motion.div>
             ))
           ) : (
-            <div className="py-8">
-              <div className="mx-auto max-w-md rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm text-center">
-                <div className=" text-lg uppercase tracking-wider text-slate-900 dark:text-slate-100">
+            <div className="py-8 max-md:py-3">
+              <div className="mx-auto max-w-md rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-[#0f1a2b] shadow-sm text-center max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0 max-md:text-left max-md:shadow-none dark:max-md:bg-transparent">
+                <div className=" text-lg uppercase tracking-wider text-slate-900 dark:text-slate-100 max-md:hidden">
                   No completed modules yet
                 </div>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 max-md:mt-0 max-md:text-[12px]! max-md:text-slate-500 dark:max-md:text-slate-400">
                   You have not finished a practice set for {activeCohort} yet. Finish one to start this history.
                 </p>
                 <button
                   onClick={() => onNavigate('practice')}
-                  className="  mt-2 px-3 py-1.5 text-sm border border-slate-200 bg-[#0f8b8d] text-slate-900 shadow-sm hover:brightness-105 dark:border-slate-700 shadow-sm"
+                  className="  mt-2 px-3 py-1.5 text-sm rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#00696b] dark:border-teal-600 dark:bg-[#0f8b8d] dark:text-white dark:hover:bg-[#0b6b6d] max-md:hidden max-md:mt-2 max-md:rounded-lg max-md:border max-md:border-slate-200/70 max-md:bg-[#0f8b8d] max-md:px-3 max-md:py-1.5 max-md:text-[12px]! max-md:font-semibold max-md:text-white dark:max-md:border-slate-700/60"
                 >
                   Start practice
                 </button>
@@ -729,7 +793,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
       {downloadSuccess && (
         <div
           role="status"
-          className="fixed bottom-6 right-6 z-50 max-w-xs rounded-[20px] border border-slate-200 bg-white/95 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.35)] backdrop-blur-[14px] dark:border-slate-600 dark:bg-[#0f1a2b]/95"
+          className="fixed bottom-6 right-6 z-50 max-w-xs rounded-[20px] border border-slate-200 bg-white/95 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.35)] backdrop-blur-[14px] dark:border-slate-600 dark:bg-[#0f1a2b]/95 max-md:bottom-24 max-md:left-3 max-md:right-3 max-md:max-w-none max-md:rounded-xl"
         >
           <div className=" text-lg uppercase tracking-wider text-slate-900 dark:text-slate-100">
             Export ready

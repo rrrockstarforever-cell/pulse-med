@@ -1,5 +1,5 @@
 // Clinical Evidence Browser — REAL web research.
-// Queries POST /api/web/research (server-side DuckDuckGo + PubMed, see server/web.mjs).
+// Queries POST /api/web/research (server-side DuckDuckGo + Europe PMC, see server/web.mjs).
 // "Ask AI about these results" summarises ONLY the returned sources via /api/ai/complete.
 // No canned results anywhere; every failure is surfaced.
 import React, { useState, useRef, useEffect } from 'react';
@@ -219,7 +219,7 @@ export const ClinicalBrowserView: React.FC<ClinicalBrowserViewProps> = ({ onNavi
             <h1 className="text-xl font-medium tracking-tight text-white  ">Clinical Evidence Browser</h1>
             <p className="mt-1 flex items-center gap-2 text-sm text-slate-300 ">
               <Search className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{query.trim() ? query : 'Awaiting clinical query — live web + PubMed retrieval'}</span>
+              <span className="truncate">{query.trim() ? query : 'Awaiting clinical query — live web + Europe PMC retrieval'}</span>
             </p>
           </div>
           <div className="shrink-0 self-start sm:self-center">
@@ -237,7 +237,7 @@ export const ClinicalBrowserView: React.FC<ClinicalBrowserViewProps> = ({ onNavi
           </div>
         </div>
         <p className="relative z-10 mt-2 max-w-2xl text-xs leading-relaxed text-slate-300 ">
-          Searches the live web (DuckDuckGo) and PubMed abstracts at query time. Sources are fetched with their URLs — ask the AI to summarise exactly what was found.
+          Searches the live web (DuckDuckGo) and Europe PMC abstracts at query time. Sources are fetched with their URLs — ask the AI to summarise exactly what was found.
         </p>
       </div>
 
@@ -558,7 +558,7 @@ export const ClinicalBrowserView: React.FC<ClinicalBrowserViewProps> = ({ onNavi
             </div>
             <h3 className="text-sm font-medium text-slate-900  ">No sources loaded yet</h3>
             <p className="mx-auto max-w-md text-sm leading-[1.7] text-slate-500 ">
-              Type a clinical query and press Enter. Results come from a real DuckDuckGo search plus PubMed (NCBI E-utilities) at the moment you search — nothing is preloaded.
+              Type a clinical query and press Enter. Results come from a real DuckDuckGo search plus Europe PMC abstracts at the moment you search — nothing is preloaded.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
               <button
@@ -581,7 +581,7 @@ export const ClinicalBrowserView: React.FC<ClinicalBrowserViewProps> = ({ onNavi
       {/* Footer note */}
       <div className="flex items-center gap-2 px-1 pb-2 text-[11px] text-slate-400 ">
         <FileText className="h-3.5 w-3.5" />
-        <span>PubMed abstracts via NCBI E-utilities; web pages fetched for full text. Educational use — verify before clinical decisions.</span>
+        <span>Europe PMC abstracts via the EBI REST API; web pages fetched for full text. Educational use — verify before clinical decisions.</span>
       </div>
     </div>
   );

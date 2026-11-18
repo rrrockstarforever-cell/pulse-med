@@ -7,7 +7,7 @@ globalThis.localStorage = mk(store);
 globalThis.sessionStorage = mk(new Map());
 const provider = process.argv[3] || 'deeprelay';
 store.set('ai.activeProvider', provider);
-store.set('ai.model.opencode', 'deepseek-v4.1-flash');
+store.set('ai.model.deeprelay', 'deeprelay/deepseek-v4.1-flash');
 const realFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = (i, init) => realFetch(typeof i === 'string' && i.startsWith('/') ? BASE + i : i, init);
 globalThis.__planDebug = [];

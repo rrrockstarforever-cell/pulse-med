@@ -12,6 +12,10 @@ export interface ResearchSource {
 export interface ResearchResult {
   sources: ResearchSource[];
   retrievedAt: string;
+  /** 'ok' (sources found), 'no-results' (internet answered, nothing matched) or 'no-connection'. */
+  search: 'ok' | 'no-results' | 'no-connection';
+  /** One plain sentence for the model and the UI. Empty when sources were found. */
+  detail: string;
 }
 
 export declare function research(query: string, pageChars?: number): Promise<ResearchResult>;

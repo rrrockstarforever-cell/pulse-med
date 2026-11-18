@@ -43,6 +43,7 @@ import {
   ScanText,
   FileDown,
   NotebookPen,
+  ListChecks,
   Square,
   Focus,
   LayoutGrid,
@@ -56,7 +57,8 @@ import {
   Mic,
   MicOff,
 } from 'lucide-react';
-import { AppView } from '../types.ts';
+import { AppView, type ClinicalQuestion } from '../types.ts';
+import { generateChapterMcqs, type YieldLevel } from '../lib/chapterMcq.ts';
 import {
   listLibraryDocuments,
   addLibraryDocument,
@@ -338,13 +340,83 @@ const TEACHER_SYSTEM =
  "(4) the clinical meaning (how it affects a patient's care): why it matters for a patient; " +
  '(5) each step of any process, with what happens at that step; ' +
  '(6) one question for the student to answer, then the answer on the next line. ' +
- 'Use short sentences and common words. Stay grounded in the passage and cite it as [book p. N]. ' +
- 'Mark any fact not in the passage with a dagger symbol (†, meaning not in the passage). If the passage does not cover a step, say so.';
+ 'Use short sentences and common words. ' +
+ 'When a fact comes from the passage, cite it as [book p. N]; when it comes from a numbered web source, cite it as [W1] and so on. ' +
+ 'Anything in neither is your own general knowledge: give it only when it is needed to answer, and mark it with a dagger symbol (†, meaning not in the passage). ' +
+ 'If the passage does not cover a step, say so instead of filling the gap with a guess.';
+
+/**
+ * Added only when real web sources are attached. The passage is one excerpt from a large book, so
+ * "not written here" must never be read as "not true" — that rule is exactly what made the copilot
+ * fall back on an outdated passage and contradict current WHO/NLEP guidance on leprosy treatment.
+ */
+const WEB_RULES =
+ ' Live web sources are attached and numbered [W1], [W2] and so on. Rules, in this order: ' +
+ '(1) For anything that changes over time — drug regimens, doses, treatment durations, programme guidelines, case definitions, statistics — the web sources win over the passage, even when the passage says something different; say which source you followed. ' +
+ '(2) Prefer WHO, CDC, the Indian national health programmes (NLEP, MoHFW, DGHS, ICMR), Cochrane and current journals over other websites. ' +
+ '(3) The passage is a single excerpt from a whole book, so a detail missing from it is not evidence that the detail is wrong or rare; answer from the web sources instead, and drop the dagger rule for that detail. ' +
+ '(4) If the passage and a web source disagree, say so in one line, give both, and say which one is current. ' +
+ '(5) A web source is the start of a page and may be cut off. If it does not actually contain the regimen, dose or duration you need, do not claim that it does and do not invent one. ' +
+ '(6) Never invent a dose, a duration, a number or a citation that appears in neither the passage nor the web sources.';
+
+/**
+ * The text to send to the web search. The first line of the page is menu text half the time, so the
+ * student's own question leads, with a SHORT topic hint behind it. A generic quick prompt
+ * ("Teach me this…") names the task rather than the topic, so it is dropped and the passage's opening
+ * words lead alone. The hint stays short on purpose: 180 characters of middle-of-a-paragraph prose
+ * diluted the query and pushed the WHO guidance page out of the top results.
+ */
+function webSearchQuery(question: string, contextText: string): string {
+  const generic = /^(teach me|explain( this)?( passage)?|summari[sz]e|rewrite|quiz me|give (me )?an? example|what must i remember|simpler words|turn this)/i;
+  const topic = contextText.replace(/\s+/g, ' ').trim().slice(0, 60);
+  const asked = generic.test(question.trim()) ? '' : question.trim();
+  return [asked, topic].filter(Boolean).join(' ').slice(0, 200);
+}
+
+/**
+ * True when the student's own words ask for a live check ("check the internet", "look it up online",
+ * "what is the latest guidance"). Before this, those words were sent to a model with no internet and
+ * no web sources attached: the pill was off, so nothing was searched and the answer repeated itself.
+ * An explicit request in the question now turns the search on by itself.
+ */
+function wantsWeb(question: string): boolean {
+  return /\b(internet|online|web|google|search (it |this )?up|look (it |this )?up|latest|newest|recent(est)?|current guideline|up ?to ?date|check (the )?(internet|online|web|guideline)|verify)\b/i.test(question);
+}
+
+/**
+ * The web sources a research reply really contains, with the passages from the student's own books
+ * removed. The search route always returns library passages alongside the web pages, and those are
+ * local disk text — passing them in as "live web sources" is the same false claim this file is being
+ * fixed for. `note` is one plain sentence the student can read when there is nothing usable.
+ */
+function bookSourceView(data: any): { sources: { title: string; url: string; text: string }[]; note: string } {
+  const all: any[] = Array.isArray(data?.sources) ? data.sources : [];
+  const web = all.filter((s) => s && s.kind !== 'book' && typeof s.text === 'string' && s.text.trim());
+  if (web.length) {
+    return {
+      sources: web.map((s) => ({
+        title: String(s.title || 'Web source'),
+        url: String(s.url || ''),
+        text: String(s.text),
+      })),
+      note: '',
+    };
+  }
+  const unreachable = data?.search === 'no-connection' || data?.search === 'unavailable';
+  return {
+    sources: [],
+    note: unreachable
+      ? 'The internet could not be reached, so this answer is from the passage only.'
+      : 'The web search ran but found nothing usable for this question, so this answer is from the passage only.',
+  };
+}
 interface PDFReaderViewProps {
   onNavigate: (view: AppView, targetId?: string) => void;
   darkMode?: boolean;
+  /** Receives the MCQs made from a chapter's pages; the app saves them as a bank and opens the test runner. */
+  onLaunchChapterQuestions?: (questions: ClinicalQuestion[], meta: { title: string; bookTitle: string }) => void;
 }
-export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMode = false }) => {
+export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMode = false, onLaunchChapterQuestions }) => {
   const [docs, setDocs] = useState<PDFLibraryMeta[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const activeDocIdRef = useRef<string | null>(null);
@@ -397,6 +469,19 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   const [notesPartSize, setNotesPartSize] = useState<number>(5);
   const [notesBusy, setNotesBusy] = useState<boolean>(false);
   const notesCancelRef = useRef<boolean>(false);
+  // MCQs made from the pages of a chapter (the pages themselves, not saved notes).
+  const [chapterMcqBusy, setChapterMcqBusy] = useState<boolean>(false);
+  const [yieldLevel, setYieldLevel] = useState<YieldLevel>('all');
+  const [mcqStatus, setMcqStatus] = useState<string | null>(null);
+  const [mcqError, setMcqError] = useState<string | null>(null);
+  const mcqCancelRef = useRef<boolean>(false);
+  // Chapters ticked in the Index tab, and a run over all of them.
+  const [pickedEntries, setPickedEntries] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState<boolean>(false);
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+  const batchCancelRef = useRef<boolean>(false);
+  // What the last chapter's MCQ run said (its note, or why it made nothing), for the per-chapter summary of a batch.
+  const lastMcqNoteRef = useRef<string>('');
   const pageTranscriptsRef = useRef<Map<string, string>>(new Map());
   const [madeNotes, setMadeNotes] = useState<SavedNote[]>([]);
   const [checkingNotes, setCheckingNotes] = useState<Set<string>>(new Set());
@@ -406,6 +491,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   const [askContext, setAskContext] = useState<string>('');
   const [askContextLabel, setAskContextLabel] = useState<string>('current page');
   const [askIncludeWeb, setAskIncludeWeb] = useState<boolean>(false);
+  // What the web lookup really did, in plain words, shown under the answer. A failed search must never
+  // be displayed as if live sources were used.
+  const [askSearchNote, setAskSearchNote] = useState<string>('');
   const [askBusy, setAskBusy] = useState<boolean>(false);
   const [askReply, setAskReply] = useState<string>('');
   const [askQuestion, setAskQuestion] = useState<string>('');
@@ -1097,7 +1185,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
               // A page counts as "has text" only with real body text: a running header or a watermark
               // alone (a few dozen characters) must not stop a scanned page from being recognised.
               const existing = await ensurePageText(n).catch(() => '');
-              if (existing.replace(/\s+/g, '').length >= 200) { skipped += 1; return; }
+              if (existing.replace(/\s+/g, '').length >= 200) { skipped += 1; continue; }
             }
             job.update({ detail: `page ${n} · rendering` });
             const page = await pdfRef.current.getPage(n);
@@ -1460,12 +1548,127 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
     return url;
   }, [activeDocId]);
 
-  // override: notes for a given page range (a chapter from the index); label names that range in the notes.
-  const makeNotesFromPages = async (override?: { from: number; to: number; label?: string }) => {
-    if (notesBusy) return;
+  // MCQs from the pages of a chapter (or a From/To range). The pages are read as the notes feature reads them (a clean
+  // text layer is used as it is; a scanned or sparse page is transcribed from its image), then the chapter's content
+  // decides how many questions there are. override: the chapter's page range and title from the index.
+  // collect: when given (a multi-chapter run), the questions are added to this list and the test runner is not opened yet.
+  const makeMcqsFromPages = async (override?: { from: number; to: number; label?: string; collect?: ClinicalQuestion[] }): Promise<number> => {
+    if (chapterMcqBusy || notesBusy) return 0;
     const provider = getActiveProvider();
-    if (!provider) { setNotesError(`No AI provider is active. ${NOT_CONNECTED_MESSAGE}`); return; }
-    if (!activeDocId || numPages === 0) { setNotesError('Open a document first.'); return; }
+    if (!provider) { setMcqError(`No AI provider is active. ${NOT_CONNECTED_MESSAGE}`); return 0; }
+    if (!activeDocId || numPages === 0) { setMcqError('Open a document first.'); return 0; }
+    const from = Math.max(1, Math.min(numPages, Math.floor(override?.from ?? notesFrom) || 1));
+    const to = Math.max(from, Math.min(numPages, Math.floor(override?.to ?? notesTo) || from));
+    const doc = docs.find((d) => d.id === activeDocId);
+    const bookTitle = doc?.title ?? 'document';
+    const label = override?.label ?? `pages ${from}–${to}`;
+    const mcqDocId = activeDocId; // page cache key: the book these pages belong to
+    mcqCancelRef.current = false;
+    setChapterMcqBusy(true);
+    setMcqError(null);
+    setMcqStatus('Reading pages…');
+    const job = startJob(`MCQs from pages · ${bookTitle}`, `${label} (pages ${from}–${to})`);
+    const stop = () => mcqCancelRef.current || job.isCancelled();
+    try {
+      // 1. The text of every page in the range.
+      const readPage = async (n: number): Promise<string> => {
+        const key = mcqDocId + ':' + n;
+        const cached = pageTranscriptsRef.current.get(key);
+        if (cached) return cached;
+        const layer = (await ensurePageText(n).catch(() => '')).trim();
+        if (layer.length >= 600 || !pdfRef.current) return layer;
+        try {
+          const page = await pdfRef.current.getPage(n);
+          const base = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({ scale: Math.min(3, 1600 / Math.max(1, base.width)) });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+          const image = canvas.toDataURL('image/jpeg', 0.8);
+          canvas.width = 0;
+          canvas.height = 0;
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const transcript = (await aiCompleteWithImages({
+                system: PAGE_TRANSCRIBE_SYSTEM,
+                messages: [{ role: 'user', content: 'Transcribe this page.' }],
+                effort: 'min',
+                provider,
+                model: getEffectiveModel(provider),
+              }, [image])).trim();
+              if (transcript) pageTranscriptsRef.current.set(key, transcript);
+              return transcript || layer;
+            } catch (err: any) {
+              if (attempt >= 3 || !/429/.test(err?.message || '')) throw err;
+              await new Promise((resolve) => setTimeout(resolve, 10000 * (attempt + 1)));
+            }
+          }
+        } catch (err: any) {
+          console.warn('[mcq] page ' + n + ' image was not read:', err?.message || err);
+          return layer;
+        }
+      };
+      const numbers = Array.from({ length: to - from + 1 }, (_, i) => from + i);
+      const pages: { page: number; text: string }[] = [];
+      let read = 0;
+      for (let i = 0; i < numbers.length && !stop(); i += 3) {
+        const group = numbers.slice(i, i + 3);
+        const texts = await Promise.all(group.map((n) => readPage(n)));
+        group.forEach((n, k) => { if (texts[k].trim()) pages.push({ page: n, text: texts[k] }); });
+        read += group.length;
+        setMcqStatus(`Reading pages… ${read}/${numbers.length}`);
+        job.update({ progress: Math.round((read / numbers.length) * 25), detail: `reading page ${group[group.length - 1]} of ${to}` });
+      }
+      if (stop()) { job.done('Stopped'); setMcqStatus(null); return 0; }
+
+      // 2. Plan, write and check the questions from those pages only.
+      const result = await generateChapterMcqs({
+        bookTitle,
+        chapterTitle: label,
+        pages,
+        provider,
+        model: getEffectiveModel(provider),
+        shouldStop: stop,
+        yieldLevel,
+        onProgress: ({ stage, done, total }) => {
+          setMcqStatus(`${stage}… ${done}/${total}`);
+          const base = stage.startsWith('Finding') ? 25 : 40;
+          const span = stage.startsWith('Finding') ? 15 : 60;
+          job.update({ progress: base + Math.round((done / Math.max(1, total)) * span), detail: `${stage}: ${done}/${total}` });
+        },
+      });
+      if (stop()) { job.done('Stopped'); setMcqStatus(null); lastMcqNoteRef.current = 'stopped'; return 0; }
+      lastMcqNoteRef.current = result.note;
+      if (!result.questions.length) {
+        setMcqStatus(null);
+        setMcqError(`${label}: ${result.note}`);
+        job.fail(result.note);
+        return 0;
+      }
+      setMcqStatus(`${label}: ${result.note}`);
+      job.done(result.note);
+      if (override?.collect) override.collect.push(...result.questions);
+      else onLaunchChapterQuestions?.(result.questions, { title: label, bookTitle });
+      return result.questions.length;
+    } catch (err: any) {
+      const message = err?.message || 'Could not make MCQs from these pages.';
+      lastMcqNoteRef.current = message;
+      job.fail(message);
+      setMcqError(`${label}: ${message}`);
+      setMcqStatus(null);
+      return 0;
+    } finally {
+      setChapterMcqBusy(false);
+    }
+  };
+
+  // override: notes for a given page range (a chapter from the index); label names that range in the notes.
+  const makeNotesFromPages = async (override?: { from: number; to: number; label?: string }): Promise<number> => {
+    if (notesBusy) return 0;
+    const provider = getActiveProvider();
+    if (!provider) { setNotesError(`No AI provider is active. ${NOT_CONNECTED_MESSAGE}`); return 0; }
+    if (!activeDocId || numPages === 0) { setNotesError('Open a document first.'); return 0; }
     const from = Math.max(1, Math.min(numPages, Math.floor(override?.from ?? notesFrom) || 1));
     const to = Math.max(from, Math.min(numPages, Math.floor(override?.to ?? notesTo) || from));
     const partSize = Math.max(1, Math.min(20, Math.floor(notesPartSize) || 5));
@@ -1595,7 +1798,94 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
     } finally {
       setNotesBusy(false);
     }
+    return saved;
   };
+
+  // ---- Several chapters at once: tick them in the Index tab, then choose notes, MCQs or both. ----
+
+  // The page range an index entry covers: its own page to the page before the next entry at the same level or above.
+  const rangeOfEntry = (e: ContentEntry): { from: number; to: number } => {
+    const sorted = sortContents(bookContents);
+    const i = sorted.findIndex((x) => x.id === e.id);
+    const next = sorted.slice(i + 1).find((x) => LEVEL_ORDER[x.level] <= LEVEL_ORDER[e.level] && x.page > e.page);
+    return { from: e.page, to: next ? next.page - 1 : numPages };
+  };
+
+  // The ticked entries as page ranges in book order; an entry whose pages lie inside another ticked entry is left out so no page is done twice.
+  const pickedRanges = (): { id: string; title: string; from: number; to: number }[] => {
+    const all = sortContents(bookContents)
+      .filter((e) => pickedEntries.has(e.id))
+      .map((e) => ({ id: e.id, title: e.title, ...rangeOfEntry(e) }));
+    return all.filter((r) => !all.some((o) => o.id !== r.id && o.from <= r.from && o.to >= r.to && (o.from < r.from || o.to > r.to)));
+  };
+
+  const togglePicked = (id: string) => setPickedEntries((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // mode: what the user chose to make from every ticked chapter. Notes are saved as each part finishes; the MCQs of all chapters open together in the test runner at the end.
+  const runPickedChapters = async (mode: 'notes' | 'mcq' | 'both') => {
+    if (batchBusy || notesBusy || chapterMcqBusy) return;
+    const ranges = pickedRanges();
+    if (!ranges.length) return;
+    batchCancelRef.current = false;
+    setBatchBusy(true);
+    setRightTab('notes');
+    setShowNotes(true);
+    setNotesError(null);
+    setMcqError(null);
+    const bookTitle = docs.find((d) => d.id === activeDocId)?.title ?? 'document';
+    const collected: ClinicalQuestion[] = [];
+    let chaptersWithQuestions = 0;
+    let noteParts = 0;
+    const summary: string[] = [];
+    try {
+      for (let i = 0; i < ranges.length; i++) {
+        if (batchCancelRef.current) break;
+        const r = ranges[i];
+        setBatchStatus(`Chapter ${i + 1} of ${ranges.length}: ${r.title}`);
+        if (mode !== 'mcq') {
+          notesCancelRef.current = false;
+          noteParts += await makeNotesFromPages({ from: r.from, to: r.to, label: r.title });
+        }
+        if (batchCancelRef.current) break;
+        if (mode !== 'notes') {
+          lastMcqNoteRef.current = '';
+          let count = await makeMcqsFromPages({ from: r.from, to: r.to, label: r.title, collect: collected });
+          // A chapter that made nothing is tried once more after a pause (a busy or rate-limited provider often answers the second time).
+          if (count === 0 && !batchCancelRef.current && !/too little readable text|stopped/i.test(lastMcqNoteRef.current)) {
+            setBatchStatus(`Chapter ${i + 1} of ${ranges.length}: ${r.title} made nothing, trying once more…`);
+            await new Promise((resolve) => setTimeout(resolve, 8000));
+            if (!batchCancelRef.current) {
+              lastMcqNoteRef.current = '';
+              count = await makeMcqsFromPages({ from: r.from, to: r.to, label: r.title, collect: collected });
+            }
+          }
+          if (count > 0) chaptersWithQuestions += 1;
+          summary.push(`${r.title} (pages ${r.from}–${r.to}): ${count} questions. ${lastMcqNoteRef.current || 'No reply from the AI.'}`);
+        }
+      }
+      if (collected.length > 0) {
+        for (let i = collected.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [collected[i], collected[j]] = [collected[j], collected[i]];
+        }
+        const title = ranges.length === 1 ? ranges[0].title : `${chaptersWithQuestions} chapters`;
+        onLaunchChapterQuestions?.(collected, { title, bookTitle });
+      }
+      setBatchStatus(batchCancelRef.current
+        ? 'Stopped. What was already made is kept.'
+        : noteParts === 0 && collected.length === 0
+          ? 'Nothing was made. See the message above.'
+          : [`Done: ${ranges.length} chapter${ranges.length === 1 ? '' : 's'}${noteParts ? `, ${noteParts} note part${noteParts === 1 ? '' : 's'} (in this panel)` : ''}${collected.length ? `, ${collected.length} questions` : ''}.`, ...summary].join('\n'));
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  useEffect(() => { setPickedEntries(new Set()); }, [activeDocId]);
 
   // ============================ Ask AI panel ============================
 
@@ -1612,36 +1902,52 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
     setAskError(null);
     setAskCitations([]);
     setAskReply('');
+    setAskSearchNote('');
     const question = customQuestion?.trim() || 'Teach me this passage from the beginning, as if I have never seen it before.';
     setAskQuestion(question);
     const contextText = (ctx ?? askContext).trim();
     try {
       let webBlock = '';
-      let urls: string[] = [];
-      if (askIncludeWeb) {
+      // True only when at least one live web source really came back, so the web rules are never
+      // attached to an answer that has no web text behind it.
+      let webFound = false;
+      // The student asking for a live check counts as turning the Web pill on for this answer.
+      if (askIncludeWeb || wantsWeb(question)) {
         try {
           const res = await fetch('/api/web/research', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: contextText.split('\n')[0].slice(0, 120) || question }),
+            // The student's question leads the search; the passage is only a topic hint behind it.
+            // Sending the passage's first line searched menu text and missed the actual question.
+            body: JSON.stringify({ query: webSearchQuery(question, contextText), pageChars: 12000 }),
           });
           const data = await res.json().catch(() => ({}));
-          if (res.ok && Array.isArray(data.sources)) {
-            webBlock = data.sources.map((s: any) => `[W${s.n}] ${s.title} (${s.url})\n${String(s.text).slice(0, 800)}`).join('\n\n');
-            setAskCitations(data.sources.map((s: any) => `- W${s.n}: ${s.url}`));
+          const view = bookSourceView(res.ok ? data : {});
+          if (view.sources.length) {
+            // 12000 characters per page, because a regimen or a dose table often sits well past the
+            // first screenful of a page — the old 800-character cut threw it away and left the model
+            // with a page that plainly did not contain a regimen.
+            webBlock = view.sources
+              .map((s, i) => `[W${i + 1}] ${s.title} (${s.url})\n${s.text.slice(0, 12000)}`)
+              .join('\n\n');
+            setAskCitations(view.sources.map((s, i) => `- W${i + 1}: ${s.url}`));
+            webFound = true;
+            setAskSearchNote('Live web sources checked too.');
+          } else {
+            setAskSearchNote(view.note);
           }
-        } catch { /* web optional — proceed without */ }
+        } catch {
+          setAskSearchNote('The internet could not be reached, so this answer is from the passage only.');
+        }
       }
 
       const raw = await aiComplete({
-        system:
-          TEACHER_SYSTEM +
-          (askIncludeWeb ? ' Use the labelled web sources too, and cite them as [Wn].' : ''),
+        system: TEACHER_SYSTEM + (webFound ? WEB_RULES : ''),
         messages: [{
           role: 'user',
           content:
  `Book: ${docs.find((d) => d.id === activeDocId)?.title ?? 'PDF'} — context from ${askContextLabel}:\n\n${contextText}\n\n` +
-            (webBlock ? `Web sources:\n\n${webBlock}\n\n` : '') +
+            (webBlock ? `Live web sources (numbered W1, W2 …):\n\n${webBlock}\n\n` : '') +
  `Question: ${question}`,
         }],
         provider,
@@ -2276,13 +2582,6 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                 >
                   <Sparkles className="h-3 w-3" /> Ask AI
                 </button>
-                <button
-                  onClick={() => onNavigate('research')}
-                  title="Open the clinical evidence browser"
-                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-semibold transition ${T.chip} ${T.softHover}`}
-                >
-                  <ScanText className="h-3 w-3" /> Evidence
-                </button>
                 <button onClick={printDocument} title="Print" className={`rounded-lg border p-1.5 transition ${T.chip} ${T.softHover}`}>
                   <Printer className="h-3.5 w-3.5" />
                 </button>
@@ -2841,15 +3140,42 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                     {notesBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <NotebookPen className="h-3 w-3" />}
                     {notesBusy ? 'Making notes…' : 'Generate notes'}
                   </button>
+                  <div className="flex items-center gap-1">
+                                    <select value={yieldLevel} onChange={(e) => setYieldLevel(e.target.value as YieldLevel)} title="Which points the MCQs cover" className={`rounded-lg border px-2 py-1 text-[10px] ${T.input}`}>
+                    <option value="all">Everything</option>
+                    <option value="high">High-yield only</option>
+                    <option value="low">Low-yield only</option>
+                  </select>
+                  <button
+                    onClick={() => makeMcqsFromPages()}
+                    disabled={chapterMcqBusy || notesBusy}
+                    title="Write MCQs from the text of these pages only; the pages decide how many"
+                    className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40 ${T.chip}`}
+                  >
+                    {chapterMcqBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ListChecks className="h-3 w-3" />}
+                    {chapterMcqBusy ? 'Making MCQs…' : 'Make MCQs'}
+                  </button>
+                  </div>
                   {notesBusy && (
                     <button
-                      onClick={() => { notesCancelRef.current = true; }}
+                      onClick={() => { notesCancelRef.current = true; batchCancelRef.current = true; }}
                       className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300"
                     >
                       <Square className="h-3 w-3" /> Stop
                     </button>
                   )}
+                  {chapterMcqBusy && (
+                    <button
+                      onClick={() => { mcqCancelRef.current = true; batchCancelRef.current = true; }}
+                      className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300"
+                    >
+                      <Square className="h-3 w-3" /> Stop MCQs
+                    </button>
+                  )}
                 </div>
+                {batchStatus && <p className={`mt-2 whitespace-pre-line rounded border px-2 py-1 text-[10px] font-medium ${T.chip}`}>{batchStatus}</p>}
+                {mcqStatus && <p className={`mt-2 rounded border px-2 py-1 text-[10px] ${T.chip}`}>{mcqStatus}</p>}
+                {mcqError && <p className={`mt-2 rounded border px-2 py-1 text-[10px] ${T.chipWarn}`}>{mcqError}</p>}
                 {madeNotes.length > 0 && (
                   <button
                     onClick={() => downloadNotesPdf(
@@ -2929,11 +3255,42 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                     setNotesTo(to);
                     void makeNotesFromPages({ from: e.page, to, label: e.title });
                   }}
-                  disabled={notesBusy}
+                  disabled={notesBusy || batchBusy}
                   title={`Make notes from ${LEVEL_LABEL[e.level].toLowerCase()} "${e.title}"`}
                   className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-40 ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
                 >
                   <NotebookPen className="h-3 w-3" /> Notes
+                </button>
+              );
+              const pickBox = (e: ContentEntry) => (
+                <input
+                  type="checkbox"
+                  checked={pickedEntries.has(e.id)}
+                  onChange={() => togglePicked(e.id)}
+                  onClick={(ev) => ev.stopPropagation()}
+                  disabled={batchBusy}
+                  aria-label={`Select "${e.title}"`}
+                  title="Tick to make notes or MCQs from several chapters at once"
+                  className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#0f8b8d]"
+                />
+              );
+              const mcqButton = (e: ContentEntry) => (
+                <button
+                  onClick={(ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    const to = endPageOf(e);
+                    setRightTab('notes');
+                    setShowNotes(true);
+                    setNotesFrom(e.page);
+                    setNotesTo(to);
+                    void makeMcqsFromPages({ from: e.page, to, label: e.title });
+                  }}
+                  disabled={chapterMcqBusy || notesBusy || batchBusy}
+                  title={`Make MCQs from the pages of ${LEVEL_LABEL[e.level].toLowerCase()} "${e.title}"`}
+                  className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-40 ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
+                >
+                  <ListChecks className="h-3 w-3" /> MCQs
                 </button>
               );
               // A parent with children is a dropdown; a leaf is a plain line that opens its page.
@@ -2945,6 +3302,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                       key={e.id}
                       className="group flex items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 transition hover:bg-white/70 dark:hover:bg-white/[0.05]"
                     >
+                      {pickBox(e)}
                       <span className="flex shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-slate-500 dark:bg-white/[0.06]">
                         {e.auto ? <Sparkles className="h-2.5 w-2.5" /> : <Ruler className="h-2.5 w-2.5" />}
                         {LEVEL_LABEL[e.level]}
@@ -2954,6 +3312,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                       </button>
                       {pageChip(e)}
                       {notesButton(e)}
+                      {mcqButton(e)}
                       {removeButton(e)}
                     </li>
                   );
@@ -2962,11 +3321,13 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                   <li key={e.id} className="group">
                     <details open={e.level === 'unit' || e.level === 'chapter'} className="group">
                       <summary className="flex cursor-pointer list-none items-center gap-2 py-1">
+                        {pickBox(e)}
                         <span className={`text-[9px] text-slate-400 transition-transform group-open:rotate-90 ${T.dim}`}>▶</span>
                         <span className={`min-w-0 flex-1 truncate ${styleOf[e.level]}`}>{e.title}</span>
                         <span className={`shrink-0 font-mono text-[9px] ${T.dim}`}>{children.length}</span>
                         {pageChip(e)}
                         {notesButton(e)}
+                        {mcqButton(e)}
                         {removeButton(e)}
                       </summary>
                       <ul className="ml-2 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">{children.map(renderNode)}</ul>
@@ -3051,6 +3412,59 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                       Add to contents
                     </button>
                   </div>
+
+                  {(pickedEntries.size > 0 || batchBusy) && (() => {
+                    const ranges = pickedRanges();
+                    const pageTotal = ranges.reduce((sum, r) => sum + (r.to - r.from + 1), 0);
+                    const busy = batchBusy || notesBusy || chapterMcqBusy;
+                    const choice = `flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40`;
+                    return (
+                      <div className={`shrink-0 space-y-2 border-b px-3 py-2.5 ${T.divider}`} data-testid="chapter-pick-bar">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-[11px] font-semibold ${T.strong}`}>
+                            {ranges.length} chapter{ranges.length === 1 ? '' : 's'} selected · {pageTotal} pages
+                          </span>
+                          <button
+                            onClick={() => setPickedEntries(new Set())}
+                            disabled={busy}
+                            className={`ml-auto text-[10px] underline disabled:opacity-40 ${T.muted}`}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        <p className={`text-[10px] ${T.muted}`}>What should be made from the selected chapters?</p>
+                        <div className="flex flex-wrap items-center gap-1" data-testid="yield-level">
+                            <span className={`text-[10px] ${T.muted}`}>MCQ coverage:</span>
+                            {([['all', 'Everything', 'Every testable point rated 3 or more'], ['high', 'High-yield only', 'Only the core points exams ask again and again'], ['low', 'Low-yield only', 'Only the minor details']] as const).map(([id, label, tip]) => (
+                              <button key={id} type="button" title={tip} onClick={() => setYieldLevel(id)}
+                                className={`rounded-lg border px-2 py-1 text-[10px] font-medium ${yieldLevel === id ? T.cta : T.chip}`}>{label}</button>
+                            ))}
+                          </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button onClick={() => void runPickedChapters('notes')} disabled={busy || !ranges.length} className={`${choice} ${T.chip} border`}>
+                            <NotebookPen className="h-3 w-3" /> Notes only
+                          </button>
+                          <button onClick={() => void runPickedChapters('mcq')} disabled={busy || !ranges.length} className={`${choice} ${T.chip} border`}>
+                            <ListChecks className="h-3 w-3" /> MCQs only
+                          </button>
+                          <button onClick={() => void runPickedChapters('both')} disabled={busy || !ranges.length} className={`${choice} ${T.cta}`}>
+                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <NotebookPen className="h-3 w-3" />} Notes and MCQs
+                          </button>
+                          {busy && (
+                            <button
+                              onClick={() => { batchCancelRef.current = true; notesCancelRef.current = true; mcqCancelRef.current = true; }}
+                              className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300"
+                            >
+                              <Square className="h-3 w-3" /> Stop
+                            </button>
+                          )}
+                        </div>
+                        {(batchStatus || mcqStatus) && <p className={`whitespace-pre-line rounded border px-2 py-1 text-[10px] ${T.chip}`}>{batchBusy ? [batchStatus, mcqStatus].filter(Boolean).join(' — ') : batchStatus}</p>}
+                        {mcqError && <p className={`rounded border px-2 py-1 text-[10px] ${T.chipWarn}`}>{mcqError}</p>}
+                        {notesError && <p className={`rounded border px-2 py-1 text-[10px] ${T.chipWarn}`}>{notesError}</p>}
+                      </div>
+                    );
+                  })()}
 
                   <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
                     {!tree.length && (
@@ -3236,6 +3650,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                       </button>
                     </div>
                     <div className={`whitespace-pre-wrap p-1.5 text-[10px] leading-relaxed ${T.text}`}>{askReply}</div>
+                    {askSearchNote && (
+                      <div className={`border-t px-1.5 py-1 text-[9px] leading-snug ${T.divider} ${T.muted}`}>
+                        {askSearchNote}
+                      </div>
+                    )}
                   </div>
                 ) : !askError ? (
                   <div className={`rounded-lg border border-dashed px-2 py-2.5 text-center ${T.border}`}>

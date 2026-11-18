@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { GraduationCap, Sparkles, X, Loader2, TrendingDown, CheckCircle2 } from 'lucide-react';
+import { GraduationCap, Sparkles, X, Loader2, TrendingDown, CheckCircle2, RotateCcw, BookX } from 'lucide-react';
 import { aiComplete, extractJson, getActiveProvider, getEffectiveModel } from '../lib/ai.ts';
 import { setTutorSeed } from '../lib/tutorSeed.ts';
 import { playReward } from '../lib/sounds.ts';
@@ -14,9 +14,12 @@ interface Props {
   onClose: () => void;
   /** Opens the Clinical AI Tutor (the lesson message is handed over first). */
   onTeach: () => void;
+  /** Starts a new run with the wrong and skipped questions (only right after a test). */
+  onRetry?: () => void;
+  onOpenNotebook?: () => void;
 }
 
-export const TestCoachPanel: React.FC<Props> = ({ review, darkMode, celebrate, onClose, onTeach }) => {
+export const TestCoachPanel: React.FC<Props> = ({ review, darkMode, celebrate, onClose, onTeach, onRetry, onOpenNotebook }) => {
   useEffect(() => { if (celebrate && review.xp) playReward(); }, []);
   const stats = review.topics;
   const { answered, correct, total } = review;
@@ -74,6 +77,11 @@ export const TestCoachPanel: React.FC<Props> = ({ review, darkMode, celebrate, o
           </div>
           <button onClick={onClose} className={`rounded-lg p-2 ${darkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} aria-label="Close review"><X className="h-5 w-5" /></button>
         </div>
+        {review.marks && (
+          <div className={`mt-1 text-sm ${sub}`}>
+            <span className="font-semibold text-[#0f8b8d]">Marks {review.marks.score} / {review.marks.max}</span> · {review.marks.scheme}{review.avgSeconds ? ` · about ${review.avgSeconds}s per question` : ''}
+          </div>
+        )}
 
         {!!review.xp && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
@@ -116,6 +124,40 @@ export const TestCoachPanel: React.FC<Props> = ({ review, darkMode, celebrate, o
               ))}
             </ul>
           </>
+        )}
+
+        {!!review.missed?.length && (
+          <div className="mt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-sm font-semibold"><BookX className="h-4 w-4 text-rose-500" /> Wrong and skipped ({review.missed.length})</h3>
+              <div className="flex flex-wrap gap-2">
+                {onRetry && (
+                  <button onClick={onRetry} className="inline-flex items-center gap-1.5 rounded-lg bg-[#0f8b8d] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0b6b6d]">
+                    <RotateCcw className="h-3.5 w-3.5" /> Retry these
+                  </button>
+                )}
+                {onOpenNotebook && (
+                  <button onClick={onOpenNotebook} className="rounded-lg border border-[#0f8b8d] px-3 py-1.5 text-xs font-semibold text-[#0f8b8d] hover:bg-[#0f8b8d] hover:text-white">Open Mistake Notebook</button>
+                )}
+              </div>
+            </div>
+            {onRetry && <p className={`mt-1 text-xs ${sub}`}>These were saved to your Mistake Notebook, so they come back for spaced review.</p>}
+            <ul className="mt-2 space-y-2">
+              {review.missed.map((m) => (
+                <li key={m.id} className={`rounded-xl border p-3 ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                  <div className="text-sm leading-snug">{m.stem}</div>
+                  <div className={`mt-1.5 text-xs ${sub}`}>
+                    {m.status === 'skipped' ? 'You skipped it.' : <>You chose: <span className="font-medium text-rose-500">{m.yours}</span>.</>} Correct: <span className="font-medium text-emerald-600">{m.correct}</span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+                    <span className={`rounded-full border px-2 py-0.5 ${darkMode ? 'border-slate-600' : 'border-slate-300'}`}>{m.topic}</span>
+                    {m.seconds !== undefined && <span className={`rounded-full border px-2 py-0.5 ${darkMode ? 'border-slate-600' : 'border-slate-300'}`}>{m.seconds}s</span>}
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">{m.why}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {strong.length > 0 && (

@@ -164,6 +164,7 @@ export interface QuestionRecord {
   imageSourceUrl?: string;
   imageLicence?: string;
   imageLicenceUrl?: string;
+  imageCredit?: string;
   imageId?: string;
   imageVerified?: boolean;
   sourceType?: string;
@@ -319,6 +320,7 @@ export async function saveGeneratedQuestion(
     imageSourceUrl: question.imageSourceUrl,
     imageLicence: question.imageLicence,
     imageLicenceUrl: question.imageLicenceUrl,
+    imageCredit: question.imageCredit,
     imageId: question.imageId,
     imageVerified: question.imageVerified,
   });
@@ -342,6 +344,7 @@ export async function saveGeneratedQuestion(
     imageSourceUrl: imageFields.imageSourceUrl,
     imageLicence: imageFields.imageLicence,
     imageLicenceUrl: imageFields.imageLicenceUrl,
+    imageCredit: imageFields.imageCredit,
     imageId: imageFields.imageId,
     imageVerified: imageFields.imageVerified,
     sourceType: question.sourceType,

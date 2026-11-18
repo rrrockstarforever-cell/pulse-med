@@ -3,7 +3,7 @@
 // Test Runner already saves answers, flags and position under runSession-<signature>, and the
 // signature is the module's id, so reopening a module restores where the learner stopped.
 import type { ClinicalQuestion, ExamType } from '../types.ts';
-import { DUPLICATE_SIMILARITY, stemSimilarity } from '../lib/benchmark.ts';
+import { DUPLICATE_SIMILARITY, stemSimilarity, contentWordSet, wordSetSimilarity } from '../lib/benchmark.ts';
 import { signature } from './sessionStore.ts';
 
 /** A stored question and where it lives: a saved bank (moduleId) or the QA review list (no moduleId). */
@@ -31,6 +31,8 @@ export interface ModuleSummary {
   count: number;
   answered: number;
   correct: number;
+  /** PDF bank still labelled with one topic for the whole chapter. */
+  needsTopics?: boolean;
 }
 
 /** Event fired whenever the saved list changes, so open screens can refresh. */
@@ -105,7 +107,10 @@ export async function listModules(): Promise<ModuleSummary[]> {
       } catch { /* unreadable progress: treat as not started */ }
       const answered = m.questions.filter((q) => answers[q.id]).length;
       const correct = m.questions.filter((q) => answers[q.id] && answers[q.id] === q.correctOption).length;
-      return { id: m.id, title: m.title, exam: m.exam, mode: m.mode, createdAt: m.createdAt, count: m.count, answered, correct };
+      // A PDF bank whose questions all share one topic (the whole chapter) can have its topics named per question.
+      const chapter = m.questions.filter((q) => String(q.id).startsWith('CH-'));
+      const oneTopic = chapter.length >= 2 && new Set(chapter.map((q) => (q.subtopic || '').trim())).size <= 1;
+      return { id: m.id, title: m.title, exam: m.exam, mode: m.mode, createdAt: m.createdAt, count: m.count, answered, correct, needsTopics: oneTopic };
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -167,21 +172,48 @@ export function findDuplicates(items: StoredQuestion[]): {
   similarity: number;
   sameAnswer: boolean;
 }[] {
+  const sets = items.map((it) => contentWordSet(questionText(it.question)));
   const pairs: ReturnType<typeof findDuplicates> = [];
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const similarity = stemSimilarity(questionText(items[i].question), questionText(items[j].question));
-      if (similarity >= DUPLICATE_SIMILARITY) {
-        pairs.push({
-          a: items[i],
-          b: items[j],
-          similarity,
-          sameAnswer: correctAnswerText(items[i].question) === correctAnswerText(items[j].question),
-        });
-      }
+  for (let i = 0; i < items.length; i++) comparePairsFor(i, items, sets, pairs);
+  return sortPairs(pairs);
+}
+
+const sortPairs = (pairs: ReturnType<typeof findDuplicates>) =>
+  pairs.sort((x, y) => Number(x.sameAnswer) - Number(y.sameAnswer) || y.similarity - x.similarity);
+
+/** Compares question i with every later question. Two stems can only reach the threshold when their word counts are close. */
+function comparePairsFor(i: number, items: StoredQuestion[], sets: Set<string>[], pairs: ReturnType<typeof findDuplicates>): void {
+  const A = sets[i];
+  if (A.size === 0) return;
+  for (let j = i + 1; j < items.length; j++) {
+    const B = sets[j];
+    if (B.size === 0) continue;
+    if (Math.min(A.size, B.size) / Math.max(A.size, B.size) < DUPLICATE_SIMILARITY) continue;
+    const similarity = wordSetSimilarity(A, B);
+    if (similarity >= DUPLICATE_SIMILARITY) {
+      pairs.push({
+        a: items[i],
+        b: items[j],
+        similarity,
+        sameAnswer: correctAnswerText(items[i].question) === correctAnswerText(items[j].question),
+      });
     }
   }
-  return pairs.sort((x, y) => Number(x.sameAnswer) - Number(y.sameAnswer) || y.similarity - x.similarity);
+}
+
+/** The same check that gives the screen a turn every few milliseconds, so the app does not freeze on a large list. */
+export async function findDuplicatesAsync(items: StoredQuestion[]): Promise<ReturnType<typeof findDuplicates>> {
+  const sets = items.map((it) => contentWordSet(questionText(it.question)));
+  const pairs: ReturnType<typeof findDuplicates> = [];
+  let sliceStart = Date.now();
+  for (let i = 0; i < items.length; i++) {
+    comparePairsFor(i, items, sets, pairs);
+    if (Date.now() - sliceStart > 12) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      sliceStart = Date.now();
+    }
+  }
+  return sortPairs(pairs);
 }
 
 /** Removes questions that repeat a stored question. The stored one is kept as it is. */
@@ -192,10 +224,10 @@ export function withoutStoredDuplicates(
   // The same question id is the same item (for example, one just added to the QA list by this run),
   // not a repeat; only a different id with a near-identical stem counts as a repeat.
   const others = stored.filter((s) => !questions.some((q) => q.id === s.question.id));
-  const storedTexts = others.map((s) => questionText(s.question));
+  const storedSets = others.map((s) => contentWordSet(questionText(s.question)));
   const kept = questions.filter((q) => {
-    const text = questionText(q);
-    return !storedTexts.some((t) => stemSimilarity(text, t) >= DUPLICATE_SIMILARITY);
+    const A = contentWordSet(questionText(q));
+    return !storedSets.some((B) => wordSetSimilarity(A, B) >= DUPLICATE_SIMILARITY);
   });
   return { kept, dropped: questions.length - kept.length };
 }

@@ -6,18 +6,12 @@ const $ = (id) => document.getElementById(id);
 const state = {
   token: localStorage.getItem('pmdc.token') || '',
   status: null,
-  agentFormInit: false,
   logs: [],
   lastSeq: 0,
   logSignature: '',
   follow: true,
-  shot: null,
-  agentRunning: null,
-  agentJobs: [],
-  sending: false,
   statusBusy: false,
   logsBusy: false,
-  jobsBusy: false,
   jobWasActive: false,
   offline: false,
   checkpointSignature: '',
@@ -178,7 +172,6 @@ function renderStatus(s) {
   renderApp(s);
   renderAi(s.ai);
   renderBuild(s);
-  renderAgentCard(s);
   renderCheckpoints(s.checkpoints);
   renderSystem(s);
 
@@ -402,35 +395,6 @@ function renderBuild(s) {
     foot.append(el('p', 'hint mono', s.installer.path));
   } else {
     foot.append(el('p', 'hint', 'No installer in release/ yet.'));
-  }
-}
-
-function renderAgentCard(s) {
-  const a = s.agent;
-  const tone = a.available ? (a.sessionId ? 'ok' : 'warn') : 'warn';
-  setPill($('agentPill'), a.available ? (a.sessionId ? 'ready' : 'no session') : 'manual only', tone);
-  renderKv($('agentKv'), [
-    ['CLI', a.available ? (a.version || 'found') : 'not found'],
-    ['Session', a.sessionId || 'none'],
-    ['Model', a.model || 'session default'],
-    ['Auto-approve', a.autoApprove ? 'on' : 'off'],
-    ['Transport', a.transport],
-  ]);
-  $('agentHint').textContent = a.available
-    ? a.note
-    : 'OpenCode CLI was not found. Instructions are written to a clearly labelled manual handoff file instead of pretending to send.';
-  $('agentTransport').textContent = a.available ? `${a.transport} · ${a.cliPath}` : 'manual handoff only';
-
-  if (!state.agentFormInit) {
-    $('agentSession').value = a.sessionId || '';
-    $('agentModel').value = a.model || '';
-    $('agentCli').value = a.cliPath || '';
-    $('agentAuto').checked = a.autoApprove !== false;
-    state.agentFormInit = true;
-  } else {
-    if (!$('agentSession').dataset.dirty) $('agentSession').value = a.sessionId || '';
-    if (!$('agentModel').dataset.dirty) $('agentModel').value = a.model || '';
-    if (!$('agentCli').dataset.dirty) $('agentCli').value = a.cliPath || '';
   }
 }
 
@@ -694,293 +658,6 @@ function renderJob(job) {
 }
 
 // ---------------------------------------------------------------------------
-// agent bridge
-// ---------------------------------------------------------------------------
-function agentStatusPill(status) {
-  return {
-    running: ['running', 'run'],
-    succeeded: ['succeeded', 'ok'],
-    failed: ['failed', 'bad'],
-    cancelled: ['cancelled', 'warn'],
-  }[status] || [status || 'unknown', 'idle'];
-}
-
-async function saveAgentConfig(silent = false) {
-  const body = {
-    sessionId: $('agentSession').value.trim(),
-    model: $('agentModel').value.trim(),
-    cliPath: $('agentCli').value.trim(),
-    autoApprove: $('agentAuto').checked,
-  };
-  try {
-    const r = await api('/api/agent/config', { method: 'POST', body });
-    for (const id of ['agentSession', 'agentModel', 'agentCli']) delete $(id).dataset.dirty;
-    state.agentFormInit = true;
-    if (!silent) toast('Agent settings saved', body.sessionId || 'No session ID set.', 'ok');
-    await refreshStatus();
-    return r;
-  } catch (err) {
-    toast('Could not save agent settings', err.message, 'error');
-    throw err;
-  }
-}
-
-async function probeAgent() {
-  try {
-    await saveAgentConfig(true);
-    const r = await withButton($('btnProbe'), 'Probing…', () => api('/api/agent/probe', { method: 'POST', body: {} }));
-    const p = r.probe;
-    if (p.error) toast('Agent probe: needs attention', p.error, 'warn', 9000);
-    else toast('Agent bridge ready', `${p.version || 'OpenCode'} · session ${p.sessionId || 'none'}${p.sessionFound ? ' (found)' : ''}`, 'ok');
-    if (p.sessionId && !$('agentSession').dataset.dirty) $('agentSession').value = p.sessionId;
-    renderSessionList(p.sessions || []);
-    await refreshStatus();
-  } catch (err) {
-    toast('Agent probe failed', err.message, 'error');
-  }
-}
-
-async function listSessions() {
-  try {
-    const r = await api('/api/agent/sessions');
-    if (!r.ok) toast('Could not list sessions', r.error || 'Unknown error', 'warn');
-    else if (!r.sessions.length) toast('No sessions found', 'Start a session in OpenCode, then probe again.', 'warn');
-    renderSessionList(r.sessions || []);
-  } catch (err) {
-    toast('Could not list sessions', err.message, 'error');
-  }
-}
-
-function renderSessionList(sessions) {
-  const box = $('sessionList');
-  box.replaceChildren();
-  if (!sessions.length) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  sessions.slice(0, 30).forEach((s) => {
-    const row = el('div', 'session-row');
-    row.append(el('span', 'sid', s.id));
-    row.append(el('span', 'grow', s.title || '(untitled)'));
-    row.append(el('span', 'muted small', s.updated || ''));
-    const use = el('button', 'btn btn-tiny btn-ghost', 'Use');
-    use.type = 'button';
-    use.addEventListener('click', () => {
-      $('agentSession').value = s.id;
-      $('agentSession').dataset.dirty = '1';
-      saveAgentConfig(true).then(() => toast('Session selected', s.id, 'ok')).catch(() => {});
-    });
-    row.append(use);
-    box.append(row);
-  });
-}
-
-async function sendInstruction() {
-  const text = $('instruction').value.trim();
-  if (!text) {
-    toast('Instruction is empty', 'Type what the agent should do, then send.', 'warn');
-    $('instruction').focus();
-    return;
-  }
-  if (state.agentRunning) {
-    toast('Agent is busy', 'Wait for the current instruction to finish or cancel it.', 'warn');
-    return;
-  }
-  state.sending = true;
-  $('btnSend').disabled = true;
-  $('sendHint').textContent = state.shot ? 'Sending with screenshot…' : 'Sending…';
-  try {
-    const r = await api('/api/agent/instructions', {
-      method: 'POST',
-      body: { text, screenshotId: state.shot?.id || null },
-    });
-    state.agentRunning = r.job || null;
-    localStorage.removeItem('pmdc.draft');
-    $('sendHint').textContent = `Sent to ${r.job?.sessionId || 'agent'}.`;
-    toast('Instruction sent', `${r.job?.sessionId || 'agent'} · ${r.job?.model || 'session default model'}`, 'ok');
-    clearScreenshot();
-    renderCurrentJob(r.job);
-    await pollAgentJobs();
-  } catch (err) {
-    if (err.data?.manual) {
-      $('sendHint').textContent = `Manual handoff: ${err.data.instructionFile}`;
-      toast('Manual handoff required', `${err.data.reason} Instruction saved to ${err.data.instructionFile}. Nothing was sent automatically.`, 'warn', 12_000);
-    } else {
-      $('sendHint').textContent = '';
-      toast('Instruction was not sent', err.message, 'error');
-    }
-  } finally {
-    state.sending = false;
-    $('btnSend').disabled = Boolean(state.agentRunning);
-  }
-}
-
-async function cancelAgent() {
-  const job = state.agentRunning;
-  if (!job) return;
-  if (!confirm('Cancel the running agent instruction? This kills the agent process tree.')) return;
-  try {
-    await api(`/api/agent/jobs/${job.id}/cancel`, { method: 'POST', body: {} });
-    toast('Instruction cancelled', job.id, 'warn');
-    state.agentRunning = null;
-    $('btnSend').disabled = false;
-    $('btnCancelAgent').disabled = true;
-    await pollAgentJobs();
-    await refreshStatus();
-  } catch (err) {
-    toast('Cancel failed', err.message, 'error');
-  }
-}
-
-async function pollAgentJobs() {
-  try {
-    const r = await api('/api/agent/jobs');
-    state.agentRunning = r.running || null;
-    state.agentJobs = r.jobs || [];
-    renderCurrentJob(r.running || r.jobs?.[0] || null);
-    renderAgentJobs(r.jobs || []);
-    const running = Boolean(r.running);
-    $('btnCancelAgent').disabled = !running;
-    $('btnSend').disabled = running || state.sending;
-    if (!running && !state.sending) {
-      const hint = $('sendHint');
-      if (/^Sent to /.test(hint.textContent) && r.jobs?.[0]?.status === 'succeeded') hint.textContent = 'Last instruction succeeded.';
-      if (r.jobs?.[0]?.status === 'failed') hint.textContent = 'Last instruction failed — see the result below.';
-    }
-  } catch { /* transient */ }
-}
-
-function renderCurrentJob(job) {
-  const box = $('agentCurrent');
-  if (!job) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  const [label, tone] = agentStatusPill(job.status);
-  setPill($('currentStatus'), label, tone);
-  $('currentTitle').textContent = String(job.prompt || '').replace(/\s+/g, ' ').slice(0, 120) || job.id;
-  const started = new Date(job.startedAt).getTime();
-  const ended = job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now();
-  const meta = [`${fmtDuration(ended - started)}`, `${job.events || 0} events`, `${job.toolCalls || 0} tool events`, job.model || 'session default'];
-  $('currentMeta').textContent = meta.join(' · ');
-
-  const textBox = $('currentText');
-  const raw = $('currentRaw');
-  if (job.text && job.text.trim()) {
-    textBox.textContent = job.text;
-    textBox.hidden = false;
-  } else if (job.status === 'running') {
-    textBox.textContent = 'Waiting for the agent’s first text output…';
-    textBox.hidden = false;
-  } else {
-    textBox.textContent = job.error ? `Error: ${job.error}` : 'The agent returned no text output. Check the raw events.';
-    textBox.hidden = false;
-  }
-  raw.textContent = [
-    job.error ? `ERROR:\n${job.error}\n` : '',
-    Array.isArray(job.outputTail) && job.outputTail.length ? `EVENTS:\n${job.outputTail.join('\n')}` : 'No raw events captured.',
-  ].join('\n');
-}
-
-function renderAgentJobs(jobs) {
-  const box = $('agentJobs');
-  if (!jobs.length) {
-    box.replaceChildren(el('p', 'muted small', 'No instructions sent yet.'));
-    return;
-  }
-  box.replaceChildren();
-  for (const job of jobs.slice(0, 12)) {
-    const details = el('details', 'job-item');
-    const summary = el('summary');
-    const [label, tone] = agentStatusPill(job.status);
-    summary.append(el('span', `pill pill-${tone}`, label));
-    summary.append(el('span', 'job-title', String(job.prompt || '').replace(/\s+/g, ' ').slice(0, 90)));
-    summary.append(el('span', 'muted small', fmtDateTime(job.startedAt)));
-    details.append(summary);
-    const body = el('div', 'job-body');
-    const kv = el('dl', 'kv');
-    renderKv(kv, [
-      ['Job', job.id],
-      ['Session', job.sessionId || '—'],
-      ['Model', job.model || 'session default'],
-      ['Events', `${job.events || 0} · ${job.toolCalls || 0} tool`],
-      ['Exit', job.exitCode === null || job.exitCode === undefined ? '—' : job.exitCode],
-    ]);
-    body.append(kv);
-    if (job.instructionFile) body.append(el('p', 'hint', `Instruction file: ${job.instructionFile}`));
-    if (job.text) body.append(el('pre', null, job.text.slice(-4000)));
-    if (job.error) body.append(el('pre', null, `ERROR:\n${job.error.slice(-4000)}`));
-    if (job.status === 'running' && job.id === state.agentRunning?.id) {
-      const cancel = el('button', 'btn btn-tiny btn-danger', 'Cancel this job');
-      cancel.type = 'button';
-      cancel.addEventListener('click', (e) => {
-        e.preventDefault();
-        cancelAgent();
-      });
-      body.append(cancel);
-    }
-    details.append(body);
-    box.append(details);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// screenshots
-// ---------------------------------------------------------------------------
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read the image file.'));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function compressImage(file) {
-  if (!file.type.startsWith('image/')) throw new Error('That file is not an image.');
-  const raw = await fileToDataUrl(file);
-  if (file.size <= 1_500_000) return raw;
-  const img = await new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Could not decode the image.'));
-    image.src = raw;
-  });
-  const scale = Math.min(1, 1600 / Math.max(1, img.width));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(img.width * scale));
-  canvas.height = Math.max(1, Math.round(img.height * scale));
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.85);
-}
-
-async function attachScreenshot(file) {
-  if (!file) return;
-  try {
-    const dataUrl = await compressImage(file);
-    const r = await api('/api/screenshots', { method: 'POST', body: { dataUrl, note: file.name || 'pasted screenshot' } });
-    state.shot = { ...r, preview: dataUrl };
-    $('shotThumb').src = dataUrl;
-    $('shotMeta').textContent = `${r.file} · ${fmtBytes(r.bytes)}`;
-    $('shotPreview').hidden = false;
-    toast('Screenshot attached', `${r.file} will be passed to the agent with the next instruction.`, 'ok');
-  } catch (err) {
-    toast('Screenshot upload failed', err.message, 'error');
-  }
-}
-
-function clearScreenshot() {
-  state.shot = null;
-  $('shotPreview').hidden = true;
-  $('shotThumb').removeAttribute('src');
-  $('shotMeta').textContent = '';
-  $('shotFile').value = '';
-}
-
-// ---------------------------------------------------------------------------
 // checkpoints
 // ---------------------------------------------------------------------------
 async function createCheckpoint() {
@@ -1020,13 +697,11 @@ async function restoreCheckpoint() {
 // ---------------------------------------------------------------------------
 // wiring
 // ---------------------------------------------------------------------------
-function markDirty(e) { e.target.dataset.dirty = '1'; }
-
 function init() {
   $('logFollow').checked = true;
   $('logFollow').addEventListener('change', (e) => { state.follow = e.target.checked; });
 
-  $('btnRefresh').addEventListener('click', () => { refreshStatus(); pollLogs(true); pollAgentJobs(); });
+  $('btnRefresh').addEventListener('click', () => { refreshStatus(); pollLogs(true); });
   $('btnExportLogs').addEventListener('click', exportLogs);
   $('btnExportLogs2')?.addEventListener('click', exportLogs);
   $('btnClearLogs').addEventListener('click', async () => {
@@ -1065,43 +740,6 @@ function init() {
   $('btnCheckpoint').addEventListener('click', createCheckpoint);
   $('btnRestore').addEventListener('click', restoreCheckpoint);
 
-  $('agentSession').addEventListener('input', markDirty);
-  $('agentModel').addEventListener('input', markDirty);
-  $('agentCli').addEventListener('input', markDirty);
-  $('btnSaveAgent').addEventListener('click', () => saveAgentConfig(false));
-  $('btnProbe').addEventListener('click', probeAgent);
-  $('btnSessions').addEventListener('click', listSessions);
-
-  $('btnSend').addEventListener('click', sendInstruction);
-  $('btnCancelAgent').addEventListener('click', cancelAgent);
-  $('btnRefreshJobs').addEventListener('click', pollAgentJobs);
-
-  const draft = localStorage.getItem('pmdc.draft');
-  if (draft) $('instruction').value = draft;
-  $('instruction').addEventListener('input', (e) => localStorage.setItem('pmdc.draft', e.target.value));
-  $('instruction').addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      sendInstruction();
-    }
-  });
-  $('instruction').addEventListener('paste', (e) => {
-    const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
-    if (item) {
-      e.preventDefault();
-      attachScreenshot(item.getAsFile());
-    }
-  });
-  $('instruction').addEventListener('dragover', (e) => { e.preventDefault(); });
-  $('instruction').addEventListener('drop', (e) => {
-    const file = e.dataTransfer?.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      e.preventDefault();
-      attachScreenshot(file);
-    }
-  });
-  $('shotFile').addEventListener('change', (e) => attachScreenshot(e.target.files?.[0]));
-  $('btnRemoveShot').addEventListener('click', clearScreenshot);
   $('btnToken').addEventListener('click', () => {
     $('tokenInput').value = state.token;
     $('tokenDialog').showModal();
@@ -1126,12 +764,10 @@ function init() {
 
   refreshStatus();
   pollLogs(true);
-  pollAgentJobs();
   pollActiveJob();
 
   setInterval(refreshStatus, 2500);
   setInterval(() => pollLogs(false), 1200);
-  setInterval(pollAgentJobs, 1800);
   setInterval(pollActiveJob, 1500);
 }
 

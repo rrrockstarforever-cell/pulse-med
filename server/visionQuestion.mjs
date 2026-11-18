@@ -116,13 +116,15 @@ export async function generateQuestionFromImage(opts) {
     apiKey,
     model,
     timeoutMs = Number(process.env.VISION_TIMEOUT_MS || 180000),
+    // For providers that are not an OpenAI-style URL + key (ChatGPT, Claude, Grok): async ({ system, instruction, dataUrl }) => reply text.
+    complete,
   } = opts || {};
 
   if (!imageUrl) throw new Error('imageUrl is required.');
   if (!groundTruth || !String(groundTruth).trim()) throw new Error('groundTruth is required.');
-  if (!url) throw new Error('Vision provider URL (opts.url) is required.');
-  if (!model) throw new Error('Vision model (opts.model) is required.');
-  if (!apiKey) throw new Error('No vision provider connected — cannot write from image.');
+  if (!url && !complete) throw new Error('Vision provider URL (opts.url) is required.');
+  if (!model && !complete) throw new Error('Vision model (opts.model) is required.');
+  if (!apiKey && !complete) throw new Error('No vision provider connected — cannot write from image.');
 
   const count = optionCount === 5 ? 5 : 4;
   const { buffer, type } = await fetchImage(imageUrl);
@@ -153,6 +155,7 @@ export async function generateQuestionFromImage(opts) {
 
   /** One vision call. `maxTokens` only differs between the first try and the retry. */
   const callVision = async (maxTokens) => {
+    if (complete) return { text: String(await complete({ system: SYSTEM, instruction, dataUrl })), finish: '' };
     const payload = JSON.stringify({
       model,
       messages,

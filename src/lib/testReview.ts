@@ -24,6 +24,10 @@ export interface ReviewRecord {
   answered: number;
   correct: number;
   topics: TopicStat[];
+  /** Marks with the exam's negative marking, and the questions that were wrong or skipped. */
+  marks?: MarksInfo;
+  missed?: MissedItem[];
+  avgSeconds?: number;
   advice?: ReviewAdvice;
   /** XP this test earned, and any badges it unlocked. */
   xp?: number;
@@ -31,7 +35,38 @@ export interface ReviewRecord {
   newBadges?: string[];
 }
 
-export const WEAK_BELOW = 60;
+/** One definition of "weak" for the whole app: below this accuracy, with at least WEAK_MIN_TOTAL questions when topics are added up over tests. */
+export const WEAK_BELOW = 70;
+export const WEAK_MIN_TOTAL = 3;
+
+/** Marks per answer for each exam: NEET-PG +4 / -1, INI-CET +1 / -0.33. */
+export function markingFor(exam: string): { right: number; penalty: number; label: string } {
+  return exam === 'INI_CET' ? { right: 1, penalty: 0.33, label: 'INI-CET: +1 / -0.33' } : { right: 4, penalty: 1, label: 'NEET-PG: +4 / -1' };
+}
+
+export interface MissedItem {
+  id: string;
+  subject: string;
+  topic: string;
+  stem: string;
+  /** The option text the learner chose ('' when skipped). */
+  yours: string;
+  correct: string;
+  status: 'wrong' | 'skipped';
+  seconds?: number;
+  /** A plain-words guess at why it was missed, from the time spent. */
+  why: string;
+}
+
+export interface MarksInfo { score: number; max: number; right: number; penalty: number; scheme: string }
+
+export function whyMissed(status: 'wrong' | 'skipped', seconds?: number): string {
+  if (status === 'skipped') return 'Skipped';
+  if (seconds === undefined) return 'Wrong';
+  if (seconds < 15) return 'Fast and wrong: rushed or misread?';
+  if (seconds >= 90) return 'Took long: likely a concept gap';
+  return 'Wrong: check the concept';
+}
 const KEY = 'pulse.reviews.v1';
 
 const correctText = (q: ClinicalQuestion): string => q.options.find((o) => o.id === q.correctOption)?.text ?? '';
@@ -56,21 +91,52 @@ export function analyseTopics(questions: ClinicalQuestion[], answers: Record<str
   return [...map.values()].map((s) => ({ ...s, accuracy: Math.round(((s.total - s.wrong - s.skipped) / s.total) * 100) }));
 }
 
-export function buildReview(id: string, questions: ClinicalQuestion[], answers: Record<string, string>, at = new Date().toISOString()): ReviewRecord {
+export function buildReview(id: string, questions: ClinicalQuestion[], answers: Record<string, string>, at = new Date().toISOString(), times?: Record<string, number>): ReviewRecord {
+  const exam = questions[0]?.examType ?? 'NEET_PG';
+  const answered = questions.filter((q) => answers[q.id]).length;
+  const correct = questions.filter((q) => answers[q.id] === q.correctOption).length;
+  const m = markingFor(exam);
+  const wrongCount = answered - correct;
+  const score = Math.round((correct * m.right - wrongCount * m.penalty) * 100) / 100;
+  const optText = (q: ClinicalQuestion, id?: string) => (id ? q.options.find((o) => o.id === id)?.text ?? id : '');
+  const missed: MissedItem[] = [];
+  for (const q of questions) {
+    const chosen = answers[q.id];
+    if (chosen && chosen === q.correctOption) continue;
+    const status: 'wrong' | 'skipped' = chosen ? 'wrong' : 'skipped';
+    const seconds = times && times[q.id] !== undefined ? Math.round(times[q.id]) : undefined;
+    const line = (q as { questionText?: string }).questionText;
+    const text = [q.stem, line && line !== q.stem ? line : ''].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    missed.push({
+      id: q.id,
+      subject: (q.subject || '').trim(),
+      topic: (q.subtopic || q.subject || 'General').trim(),
+      stem: text.slice(0, 260),
+      yours: optText(q, chosen),
+      correct: optText(q, q.correctOption),
+      status,
+      seconds,
+      why: whyMissed(status, seconds),
+    });
+  }
+  const timed = times ? questions.map((q) => times[q.id]).filter((v): v is number => typeof v === 'number' && v > 0) : [];
   return {
     id,
     at,
-    exam: questions[0]?.examType ?? 'NEET_PG',
+    exam,
     total: questions.length,
-    answered: questions.filter((q) => answers[q.id]).length,
-    correct: questions.filter((q) => answers[q.id] === q.correctOption).length,
+    answered,
+    correct,
     topics: analyseTopics(questions, answers),
+    marks: { score, max: questions.length * m.right, right: m.right, penalty: m.penalty, scheme: m.label },
+    missed: missed.slice(0, 60),
+    avgSeconds: timed.length ? Math.round(timed.reduce((a, b) => a + b, 0) / timed.length) : undefined,
   };
 }
 
-export function weakTopics(topics: TopicStat[], limit = 6): TopicStat[] {
+export function weakTopics(topics: TopicStat[], limit = 6, minTotal = 1): TopicStat[] {
   return topics
-    .filter((s) => s.accuracy < WEAK_BELOW)
+    .filter((s) => s.total >= minTotal && s.accuracy < WEAK_BELOW)
     .sort((a, b) => (b.wrong + b.skipped) - (a.wrong + a.skipped) || a.accuracy - b.accuracy)
     .slice(0, limit);
 }
@@ -123,5 +189,5 @@ export function weakAcrossTests(reviews: ReviewRecord[], limit = 8): TopicStat[]
     }
   }
   const all = [...map.values()].map((s) => ({ ...s, accuracy: Math.round(((s.total - s.wrong - s.skipped) / s.total) * 100) }));
-  return weakTopics(all, limit);
+  return weakTopics(all, limit, WEAK_MIN_TOTAL);
 }

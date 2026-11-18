@@ -40,7 +40,7 @@ Pulse Med is a desktop PDF reader built for medical students and clinicians prep
 - **Clinical Copilot** — Ask questions about your reading, get explanations of mechanisms, exam pearls, and high-yield concepts
 - **Quick Prompts** — One-tap "Explain" and "Key points" buttons for instant AI assistance
 - **Web-enabled answers** — Optionally include live web sources in AI responses
-- **Provider selection** — Choose from Gemini, ChatGPT, Claude, Grok, OpenCode, or NVIDIA NIM in Settings
+- **Provider selection** — Choose from Gemini, ChatGPT, Claude, Grok, or NVIDIA NIM in Settings
 
 ### Navigation
 - **Keyboard shortcuts** — Arrows/PageUp/PageDown turn pages, +/- zoom, Escape closes popups

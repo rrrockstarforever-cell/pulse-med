@@ -151,7 +151,7 @@ export const DataBackupPanel: React.FC = () => {
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={exportNow}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg   text-white text-xs font-medium"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0f8b8d] hover:bg-[#0b6b6d] text-white text-xs font-medium"
         >
           <Download className="w-3.5 h-3.5 text-[#8ff3f4]" /> Export backup (JSON)
         </button>

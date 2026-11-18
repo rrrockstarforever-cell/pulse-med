@@ -7,6 +7,7 @@ import {
   Layers,
   FileQuestion,
   Timer,
+  Target,
   AlertOctagon,
   BarChart3,
   Bookmark,
@@ -21,7 +22,6 @@ import {
   UploadCloud,
   Calendar,
   Database,
-  Images,
   Globe,
   Loader2,
   CalendarCheck,
@@ -30,6 +30,8 @@ import {
   CloudUpload,
   ClipboardCheck,
   Home,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { AppView, ExamType } from '../types.ts';
 import { soundsOn, setSoundsOn } from '../lib/sounds.ts';
@@ -43,14 +45,17 @@ interface SidebarProps {
   onToggleDarkMode: () => void;
   unresolvedMistakesCount: number;
   srsDueCount: number;
+  /** Slim icon-only rail. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 // The menu is grouped by what the learner is doing, so each item is easy to find.
 const NAV_GROUPS: { title: string; ids: AppView[] }[] = [
   { title: 'Home', ids: ['today', 'study-plan', 'reminders'] },
-  { title: 'Practice', ids: ['practice', 'question-bank', 'test-runner', 'image-review'] },
+  { title: 'Practice', ids: ['pyq-topics', 'practice', 'question-bank', 'test-runner'] },
   { title: 'Review', ids: ['reviews', 'analytics', 'mistakes', 'highlights', 'syllabus'] },
-  { title: 'Learn', ids: ['ai-tutor', 'pdf-reader', 'research'] },
+  { title: 'Learn', ids: ['ai-tutor', 'pdf-reader'] },
   { title: 'Tools', ids: ['qa', 'sync', 'settings'] },
 ];
 
@@ -137,6 +142,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleDarkMode,
   unresolvedMistakesCount,
   srsDueCount,
+  collapsed = false,
+  onToggleCollapsed,
 }) => {
   const [sound, setSound] = useState<boolean>(() => soundsOn());
   const [examDates, setExamDates] = useState<Record<ExamType, string>>(() => ({
@@ -307,6 +314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'today' as AppView, label: 'Today', icon: Home },
     { id: 'analytics' as AppView, label: 'Performance Analytics', icon: BarChart3 },
     { id: 'reviews' as AppView, label: 'Test Reviews', icon: ClipboardCheck },
+    { id: 'pyq-topics' as AppView, label: 'PYQ Topics', icon: Target },
     { id: 'practice' as AppView, label: 'Practice Builder', icon: FileQuestion },
     { id: 'question-bank' as AppView, label: 'Question Bank', icon: Database },
     { id: 'test-runner' as AppView, label: 'Active Test Runner', icon: Timer, badge: 'Live' },
@@ -317,37 +325,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'reminders' as AppView, label: 'Reminders', icon: Bell },
     { id: 'ai-tutor' as AppView, label: 'Clinical AI Tutor', icon: Brain },
     { id: 'pdf-reader' as AppView, label: 'PDF Reader & OCR', icon: BookOpen },
-    { id: 'research' as AppView, label: 'Clinical Evidence Browser', icon: Compass },
-    { id: 'image-review' as AppView, label: 'Image Question Review', icon: Images },
     { id: 'qa' as AppView, label: 'QA & Benchmark', icon: ShieldCheck },
     { id: 'sync' as AppView, label: 'Sync & Backup', icon: CloudUpload },
     { id: 'settings' as AppView, label: 'AI Subscriptions & OCR', icon: Sliders },
   ];
 
   return (
-    <aside className="w-64 bg-[#001432] text-slate-200 flex flex-col shrink-0 border-r border-[#13294b] h-screen select-none z-20">
+    <aside className={`${collapsed ? 'w-[68px]' : 'w-64'} transition-[width] duration-200 bg-[#001432] text-slate-200 flex flex-col shrink-0 border-r border-[#13294b] h-screen select-none z-20`}>
       {/* Brand Header */}
-      <div className="p-5 pb-4 border-b border-[#13294b]">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#0f8b8d] to-[#8ff3f4] flex items-center justify-center text-[#001432] shadow-sm font-medium text-lg">
+      <div className={`${collapsed ? 'p-3 pb-3' : 'p-5 pb-4'} border-b border-[#13294b] max-md:px-3 max-md:py-1.5`}>
+        <div className={`flex items-center gap-3 max-md:gap-2.5 ${collapsed ? 'justify-center' : ''}`}>
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#0f8b8d] to-[#8ff3f4] flex items-center justify-center text-[#001432] shadow-sm font-medium text-lg max-md:h-8 max-md:w-8 max-md:rounded-lg max-md:text-[15px]!">
             P
           </div>
-          <div>
-            <div className="text-sm font-medium tracking-tight text-white flex items-center gap-1.5">
+          <div className={collapsed ? 'hidden' : ''}>
+            <div className="text-sm font-medium tracking-tight text-white flex items-center gap-1.5 max-md:text-[13px]! max-md:gap-1">
               <span>PULSE MED</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 bg-[#0f8b8d]/20 text-[#8ff3f4] rounded border border-[#0f8b8d]/30">
+              <span className="text-[10px] font-mono px-1.5 py-0.2 bg-[#0f8b8d]/20 text-[#8ff3f4] rounded border border-[#0f8b8d]/30 max-md:font-sans max-md:text-[11px]! max-md:px-1 max-md:py-0">
                 PRO
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-medium">Postgraduate Exam Engine</p>
+            <p className="text-[11px] text-slate-400 font-medium max-md:hidden">Postgraduate Exam Engine</p>
           </div>
         </div>
 
         {/* 3-Way Exam Switcher (USMLE Removed) */}
-        <div className="mt-4 p-1 bg-[#13294b] rounded-xl flex items-center justify-between text-[11px] font-medium">
+        {onToggleCollapsed && (
+          <button type="button" onClick={onToggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse to icons'} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar to icons'} className="mt-3 flex w-full items-center justify-center rounded-lg py-1.5 text-slate-400 hover:bg-[#13294b] hover:text-white max-md:hidden">
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <><PanelLeftClose className="h-4 w-4" /><span className="ml-2 text-[11px] font-medium">Collapse</span></>}
+          </button>
+        )}
+        <div className={`${collapsed ? 'hidden' : 'flex'} mt-4 p-1 bg-[#13294b] rounded-xl items-center justify-between text-[11px] font-medium max-md:mt-2 max-md:p-0.5 max-md:rounded-lg max-md:text-[12px]!`}>
           <button
             onClick={() => onSelectExam('NEET_PG')}
-            className={`flex-1 py-1.5 rounded-lg transition-all text-center ${
+            className={`flex-1 py-1.5 rounded-lg max-md:rounded-md max-md:py-1 transition-all text-center ${
               selectedExam === 'NEET_PG'
                 ? 'bg-[#0f8b8d] text-white shadow-xs'
                 : 'text-slate-400 hover:text-white'
@@ -357,7 +368,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
           <button
             onClick={() => onSelectExam('INI_CET')}
-            className={`flex-1 py-1.5 rounded-lg transition-all text-center ${
+            className={`flex-1 py-1.5 rounded-lg max-md:rounded-md max-md:py-1 transition-all text-center ${
               selectedExam === 'INI_CET'
                 ? 'bg-[#0f8b8d] text-white shadow-xs'
                 : 'text-slate-400 hover:text-white'
@@ -369,10 +380,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation List */}
-      <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-4">
+      <nav className={`flex-1 min-h-0 overflow-y-auto ${collapsed ? 'px-2' : 'px-3'} py-2 space-y-4 max-md:px-2 max-md:py-1.5 max-md:space-y-3`}>
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="space-y-0.5">
-            <div className="px-3.5 pb-1 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{group.title}</div>
+            <div className={`${collapsed ? 'hidden' : ''} px-3.5 pb-1 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 max-md:px-2.5 max-md:pb-1 max-md:pt-1.5 max-md:text-[11px]! max-md:font-semibold max-md:tracking-[0.06em] max-md:text-slate-400`}>{group.title}</div>
         {navItems.filter((item) => group.ids.includes(item.id)).map((item) => {
           const isActive = currentView === item.id;
           const Icon = item.icon;
@@ -381,24 +392,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all group ${
+              title={collapsed ? item.label : undefined}
+              aria-label={item.label}
+              className={`w-full flex items-center ${collapsed ? 'justify-center px-0 md:px-0' : 'justify-between px-3.5'} py-3 md:py-2.5 max-md:min-h-11 max-md:px-3 max-md:py-2.5 rounded-xl max-md:rounded-lg text-xs max-md:text-[14px]! font-semibold transition-all group ${
                 isActive
-                  ? 'bg-gradient-to-r from-[#0f8b8d] to-[#00696b] text-white shadow-md'
-                  : 'text-slate-300 hover:bg-[#13294b]/70 hover:text-white'
+                  ? 'bg-gradient-to-r from-[#0f8b8d] to-[#00696b] max-md:bg-none max-md:bg-teal-400/15 max-md:text-teal-200 max-md:shadow-none text-white shadow-md'
+                  : 'text-slate-300 hover:bg-[#13294b]/70 max-md:hover:bg-white/5 hover:text-white'
               }`}
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 max-md:gap-2.5">
                 <Icon
-                  className={`w-4 h-4 transition-colors ${
+                  className={`w-4 h-4 max-md:h-[18px] max-md:w-[18px] transition-colors ${
                     isActive ? 'text-[#8ff3f4]' : 'text-slate-400 group-hover:text-slate-200'
                   }`}
                 />
-                <span className="truncate">{item.label}</span>
+                <span className={`truncate ${collapsed ? 'hidden' : ''}`}>{item.label}</span>
               </div>
 
-              {item.badge && (
+              {item.badge && !collapsed && (
                 <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-medium ${
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-medium max-md:font-sans max-md:text-[11px]! max-md:px-2 max-md:py-0.5 ${
                     isActive
                       ? 'bg-white/20 text-white'
                       : item.badge.includes('Due') || item.badge === 'Live'
@@ -417,13 +430,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       {/* Real Live Countdown Cards per Exam */}
-      <div className="px-3 pb-2 shrink-0 max-h-[52vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider sticky top-0 bg-[#001432] pb-1 z-10">
+      <div className={`${collapsed ? 'hidden' : ''} px-3 pb-2 shrink-0 max-h-[52vh] overflow-y-auto max-md:px-2 max-md:pb-1.5`}>
+        <div className="flex items-center justify-between px-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider sticky top-0 bg-[#001432] pb-1 z-10 max-md:px-1.5 max-md:text-[11px]! max-md:font-semibold max-md:tracking-[0.06em]">
           <span className="flex items-center gap-1.5">
             <Timer className="w-3.5 h-3.5 text-[#0f8b8d]" />
             Exam Countdowns
           </span>
-          <span className="text-[9px] font-mono text-[#8ff3f4]">Live</span>
+          <span className="text-[9px] font-mono text-[#8ff3f4] max-md:font-sans max-md:text-[11px]! max-md:uppercase max-md:text-teal-300">Live</span>
         </div>
 
         <div className="space-y-1.5">
@@ -441,20 +454,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectExam(exam.id);
                   }
                 }}
-                className={`p-2.5 rounded-xl border text-xs transition-all ${
+                className={`p-2.5 rounded-xl border text-xs transition-all max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-2 max-md:min-h-10 max-md:px-2.5 max-md:py-1.5 max-md:rounded-lg ${
                   isSelected
-                    ? 'bg-gradient-to-br from-[#0f8b8d]/25 to-[#13294b] border-[#0f8b8d] ring-1 ring-[#0f8b8d]/50 shadow-xs'
-                    : 'bg-[#13294b]/40 hover:bg-[#13294b]/70 border-slate-700/60 text-slate-300'
+                    ? 'bg-gradient-to-br from-[#0f8b8d]/25 to-[#13294b] border-[#0f8b8d] ring-1 ring-[#0f8b8d]/50 shadow-xs max-md:bg-none max-md:bg-teal-400/10 max-md:border-teal-400/40 max-md:ring-0 max-md:shadow-none'
+                    : 'bg-[#13294b]/40 hover:bg-[#13294b]/70 border-slate-700/60 text-slate-300 max-md:bg-transparent max-md:border-slate-700/60'
                 }`}
               >
                 {/* Header: Exam Title & Selected Badge */}
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`font-medium text-xs ${isSelected ? 'text-white' : 'text-slate-300'}`}>
+                <div className="flex items-center justify-between mb-1 max-md:mb-0 max-md:flex-1 max-md:min-w-0 max-md:gap-1.5">
+                  <div className="flex items-center gap-1.5 max-md:gap-1 max-md:min-w-0">
+                    <span className={`font-medium text-xs max-md:text-[13px]! max-md:truncate ${isSelected ? 'text-white' : 'text-slate-300'}`}>
                       {exam.label}
                     </span>
                     {isSelected && (
-                      <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 bg-[#0f8b8d]/30 text-[#8ff3f4] rounded border border-[#0f8b8d]/40">
+                      <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 bg-[#0f8b8d]/30 text-[#8ff3f4] rounded border border-[#0f8b8d]/40 max-md:hidden">
                         Selected
                       </span>
                     )}
@@ -470,7 +483,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         openEditor(exam);
                       }
                     }}
-                    className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-700/60 transition-colors"
+                    className="p-1 max-md:p-0.5 max-md:shrink-0 text-slate-400 hover:text-white rounded hover:bg-slate-700/60 transition-colors"
                     title={dateVal ? "Edit exam dates" : "Set exam date"}
                   >
                     <Calendar className="w-3 h-3" />
@@ -481,7 +494,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {isEditing ? (
                   <div 
                     onClick={(e) => e.stopPropagation()} 
-                    className="mt-1.5 pt-1.5 border-t border-slate-700/60 space-y-2"
+                    className="mt-1.5 pt-1.5 border-t border-slate-700/60 space-y-2 max-md:basis-full max-md:mt-2 max-md:pt-2"
                   >
                     <div className="flex items-center gap-1">
                       <input
@@ -632,7 +645,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           e.stopPropagation();
                           openEditor(exam);
                         }}
-                        className="mt-0.5 text-[11px] font-semibold text-[#8ff3f4] hover:underline flex items-center gap-1"
+                        className="mt-0.5 text-[11px] font-semibold text-[#8ff3f4] hover:underline flex items-center gap-1 max-md:mt-0 max-md:shrink-0 max-md:whitespace-nowrap max-md:text-[11px]!"
                       >
                         <Calendar className="w-3 h-3" />
                         <span>Set exam date</span>
@@ -640,7 +653,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
 
                     {countdown.status === 'PASSED' && (
-                      <div className="flex items-center justify-between text-[11px]">
+                      <div className="flex items-center justify-between text-[11px] max-md:gap-2 max-md:shrink-0 max-md:whitespace-nowrap max-md:text-[11px]!">
                         <span className="font-semibold text-rose-400">Exam date passed</span>
                         <button
                           type="button"
@@ -656,8 +669,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
 
                     {countdown.status === 'ACTIVE' && (
-                      <div>
-                        <div className="font-mono font-medium text-xs text-white tracking-wide">
+                      <div className="max-md:shrink-0 max-md:text-right">
+                        <div className="font-mono font-medium text-xs text-white tracking-wide max-md:font-sans max-md:text-[11px]! max-md:tabular-nums max-md:whitespace-nowrap">
                           {countdown.text}
                         </div>
                         {/* More than one sitting/shift: choose which date to count down to. */}
@@ -666,7 +679,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             value={dateVal}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => selectExamDate(exam.id, exam.storageKeys, e.target.value)}
-                            className="mt-1 w-full px-1.5 py-0.5 bg-white dark:bg-slate-900/80 border border-slate-300 dark:border-slate-700 rounded text-[10px] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-[#0f8b8d]"
+                            className="mt-1 w-full px-1.5 py-0.5 bg-white dark:bg-slate-900/80 border border-slate-300 dark:border-slate-700 rounded text-[10px] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-[#0f8b8d] max-md:mt-0.5 max-md:max-w-[130px] max-md:px-1 max-md:font-sans max-md:text-[10px]!"
                             title="Choose which exam date to count down to"
                           >
                             {examDateLists[exam.id].map((d) => (
@@ -676,7 +689,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             ))}
                           </select>
                         ) : (
-                          <div className="text-[9px] text-slate-400 font-mono">
+                          <div className="text-[9px] text-slate-400 font-mono max-md:hidden">
                             {new Date(dateVal).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
                           </div>
                         )}
@@ -691,8 +704,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer Controls: Dark Mode Toggle */}
-      <div className="p-3 border-t border-[#13294b] flex items-center justify-between text-xs text-slate-400 shrink-0">
-        <span className="text-[11px] font-mono text-slate-500">Board Exam Engine</span>
+      <div className="p-3 border-t border-[#13294b] flex items-center justify-between text-xs text-slate-400 shrink-0 max-md:px-3 max-md:py-2">
+        <span className="text-[11px] font-mono text-slate-500 max-md:font-sans max-md:text-[12px]! max-md:text-slate-400">Board Exam Engine</span>
 
         <button
           onClick={() => { const next = !sound; setSound(next); setSoundsOn(next); }}
