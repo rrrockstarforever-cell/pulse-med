@@ -17,6 +17,7 @@ import {
 import { AppView, ExamType } from '../types.ts';
 import { summarizeAttempts, listAttempts, AttemptRecord } from '../utils/attemptStore.ts';
 import { loadActiveTest } from '../utils/sessionStore.ts';
+import { downloadNotesPdf } from './RevisionNote.tsx';
 import { Card } from '../components/ui/card.tsx';
 
 interface PerformanceAnalyticsViewProps {
@@ -118,23 +119,7 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
         const accuracy = Math.round((correct / solved) * 100);
         const status = getStatus(accuracy, solved);
         const cfg = statusConfig[status];
-        // Try to infer a sub-description from subject name
-        let sub = '';
-        if (name.toLowerCase().includes('biochem')) sub = 'Metabolic Pathways, Inborn Errors, Genetics';
-        else if (name.toLowerCase().includes('pharma')) sub = 'Autonomic, Antimicrobial Resistance, Kinetics';
-        else if (name.toLowerCase().includes('surgery')) sub = 'General, Polytrauma, Acute Abdomen, Oncology';
-        else if (name.toLowerCase().includes('anatomy')) sub = 'Head & Neck, Brachial Plexus, Embryology';
-        else if (name.toLowerCase().includes('obstet') || name.toLowerCase().includes('gyn')) sub = 'Labor Complications, CTG, Contraception';
-        else if (name.toLowerCase().includes('patholog') || name.toLowerCase().includes('micro')) sub = 'Neoplasia, RPGN Crescents, Bacteriology';
-        else if (name.toLowerCase().includes('medicine')) sub = 'Cardiology, Neurology, Nephrology, Endocrine';
-        else if (name.toLowerCase().includes('applied basic')) sub = 'Molecular Pathology, Transposons, Receptors';
-        else if (name.toLowerCase().includes('systemic')) sub = 'Sepsis, Inotropes, Anti-arrhythmics, ICU';
-        else if (name.toLowerCase().includes('surgical special')) sub = 'ATLS, Operative Anatomy, Vascular Staging';
-        else if (name.toLowerCase().includes('maternal') || name.toLowerCase().includes('child')) sub = 'Neonatal Sepsis, PPH, Eclampsia, IEM';
-        else if (name.toLowerCase().includes('diagnostic') || name.toLowerCase().includes('imag')) sub = 'Silver Stains, IF Patterns, CT Signs';
-        else sub = 'Core topics';
-
-        return { name, sub, solved, incorrect, accuracy, status, statusColor: cfg.color, barColor: cfg.bar };
+        return { name, sub: 'From your answered questions', solved, incorrect, accuracy, status, statusColor: cfg.color, barColor: cfg.bar };
       });
   }, [cohortAttempts]);
 
@@ -148,8 +133,32 @@ export const PerformanceAnalyticsView: React.FC<PerformanceAnalyticsViewProps> =
   const weakSubjects = summary.weakSubjects.filter(w => w.accuracy < WEAK_BELOW).slice(0, 5);
 
   const handleExportPDF = () => {
-    setDownloadSuccess(true);
-    setTimeout(() => setDownloadSuccess(false), 3000);
+    const exam = activeCohort.replace(/_/g, '-');
+    const accuracyText = summary.accuracyPercent === null ? 'not enough answers yet' : `${summary.accuracyPercent}%`;
+    const lines = [
+      `Exam view: ${exam}`,
+      `Modules recorded: ${summary.modules}`,
+      `Questions answered: ${summary.questionsAnswered}`,
+      `Correct: ${summary.correct}`,
+      `Accuracy: ${accuracyText}`,
+      '',
+      'Subjects in this view:',
+    ];
+    if (sortedSubjects.length === 0) {
+      lines.push('- No answered questions in this exam view yet.');
+    } else {
+      sortedSubjects.forEach((subject) => {
+        lines.push(`- ${subject.name}: ${subject.solved} answered, ${subject.incorrect} wrong, ${subject.accuracy}%`);
+      });
+    }
+    try {
+      downloadNotesPdf(`Pulse Med progress - ${exam}`, lines.join('\n'));
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 3000);
+    } catch (err: any) {
+      setDownloadSuccess(false);
+      window.alert(err?.message || 'Could not open the report.');
+    }
   };
 
   const examDate = getExamDate(activeCohort);

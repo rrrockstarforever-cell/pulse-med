@@ -2,6 +2,7 @@
 // abstracts, fetched here (not in the page). Every source is returned with its URL so the answer can cite it.
 // Only public http(s) pages are fetched. PubMed is not used.
 import { bookPassages } from './books.mjs';
+import { questionTerms, planResearchQuery, rankWebHits, passageWindow, passagesCoverQuestion } from './searchPlanner.mjs';
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) PulseMed/0.2 (study tool)';
 const TRUSTED = /(nih\.gov|ncbi\.nlm|who\.int|cdc\.gov|nice\.org\.uk|medlineplus|mayoclinic|msdmanuals|statpearls|radiopaedia|cochrane|bmj\.com|thelancet|nejm|jamanetwork|icmr|mohfw|aiims)/i;
 
@@ -23,14 +24,6 @@ function isPublicUrl(u) {
   return true;
 }
 
-/**
- * Per-call record of what the network actually did.
- *
- * This exists because a backend that swallows its own errors cannot answer "did the internet work?".
- * openFDA catches every failure and returns an empty list, so a dead connection and a genuine
- * no-match looked identical. Every HTTP attempt ticks this counter, so `ok > 0` means the internet
- * really answered. Kept per call, never module-level, so two searches cannot corrupt each other.
- */
 function newNet() {
   return { attempts: 0, ok: 0 };
 }
@@ -83,47 +76,137 @@ async function europePmc(query, journals = [], net) {
     }));
 }
 
-async function pageText(url, chars = 2500, net) {
-  const r = await get(url, 12000, net);
-  const type = r.headers.get('content-type') || '';
-  if (!/text\/html|text\/plain|xml/.test(type)) throw new Error('not a web page');
-  return strip((await r.text()).slice(0, 1_500_000)).slice(0, chars);
+function pdfPageText(items) {
+  const rows = new Map();
+  for (const item of items) {
+    const str = String(item?.str || '').trim();
+    if (!str) continue;
+    const y = Math.round((item.transform?.[5] ?? 0) / 3) * 3;
+    const x = item.transform?.[4] ?? 0;
+    if (!rows.has(y)) rows.set(y, []);
+    rows.get(y).push({ x, str });
+  }
+  return [...rows.keys()]
+    .sort((a, b) => b - a)
+    .map((y) => rows.get(y).sort((a, b) => a.x - b.x).map((cell) => cell.str).join(' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
-// pageChars: how much of each page to keep. The start of a page is often menus, so a fact check asks for more.
-export async function research(query, pageChars = 2500) {
+// Read the whole page. A 2500-character cut from the start dropped the treatment section:
+// on the WHO leprosy fact sheet that sentence starts at character 3617. `chars` is kept
+// so old callers still compile, but a small value must not bring that cut back.
+// A PDF is a page too. The regimen table is often a PDF, and rejecting it left only the search snippet.
+const FULL_PAGE_CAP = 100_000;
+
+function normalizeSourceKind(item) {
+  const url = String(item?.url || '').toLowerCase();
+  if (/^(book:|mybooks:|mylib:|file:|internal:)/.test(url)) return 'book';
+  if (/^https?:/.test(url)) return item?.kind === 'book' ? 'book' : 'web';
+  return 'web';
+}
+async function pageText(url, chars = FULL_PAGE_CAP, net) {
+  const r = await get(url, 12000, net);
+  const type = r.headers.get('content-type') || '';
+  const cap = Math.max(FULL_PAGE_CAP, Math.min(Number(chars) || 0, FULL_PAGE_CAP));
+
+  if (/application\/pdf/i.test(type) || /\.pdf(?:$|[?#])/i.test(url)) {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await r.arrayBuffer());
+    const pdf = await getDocument({ data, disableWorker: true, isEvalSupported: false }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages && text.length < cap; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += (text ? '\n' : '') + pdfPageText(content.items);
+    }
+    return text.slice(0, cap);
+  }
+
+  if (!/text\/html|text\/plain|xml/i.test(type)) throw new Error('not a web page');
+  return strip((await r.text()).slice(0, 1_500_000)).slice(0, cap);
+}
+
+// pageChars is accepted for older callers. pageText reads the whole page up to FULL_PAGE_CAP.
+// `context` is optional and additive: { question, topic, subject }. Old callers keep working.
+export async function research(query, pageChars = 2500, context = {}) {
   const q = String(query || '').trim().slice(0, 300);
-  if (!q) throw new Error('Nothing to search for.');
+  const plan = planResearchQuery({
+    question: typeof context?.question === 'string' && context.question.trim() ? context.question : query,
+    topic: typeof context?.topic === 'string' ? context.topic : '',
+    subject: typeof context?.subject === 'string' ? context.subject : '',
+    query,
+  });
+  const searchText = plan.searchVariant || q;
+  if (!searchText) throw new Error('Nothing to search for.');
   const net = newNet();
-  const [w, p, label] = await Promise.allSettled([ddg(q, net), europePmc(q, [], net), openFdaByDrug(q, net)]);
+  // The subject steers the book search and the journals; the whole question steers ranking.
+  const subject = plan.subject;
+  const [w, p, label] = await Promise.allSettled([
+    ddg(searchText, net),
+    europePmc(searchText, journalsFor(subject), net),
+    openFdaByDrug(searchText, net),
+  ]);
   // "The internet answered but had nothing" and "the internet could not be reached" are different
   // facts, and the learner is told which one happened. `net.ok` counts HTTP responses that actually
   // arrived, so a backend that swallows its own errors (openFDA) can no longer fake a live search.
   const reachable = net.ok > 0;
-  const web = (w.status === 'fulfilled' ? w.value : []).sort((a, b) => Number(TRUSTED.test(b.url)) - Number(TRUSTED.test(a.url))).slice(0, 3);
+  // Rank by whether the page shares the asked words. A trusted host is a small boost, not a
+  // free pass to the front: two of the three old slots went to listed hosts that never held the fact.
+  const ranked = rankWebHits(w.status === 'fulfilled' ? w.value : [], plan, (url) => TRUSTED.test(String(url || '')));
+  const web = ranked.slice(0, 5);
   const papers = p.status === 'fulfilled' ? p.value : [];
   const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars, net)));
+  const readPages = web.map((x, i) => {
+    const full = pages[i].status === 'fulfilled' ? pages[i].value : '';
+    // Keep the part of the page that talks about the ask, not the opening lines.
+    const text = full && full.length > 200 ? passageWindow(full, plan.terms, 20000) : '';
+    return { ...x, full, text: text || x.snippet };
+  });
   // Textbook passages from the user's own library come first: they are the book the student studies from.
-  const books = bookPassages(q, 6).map((b) => ({ ...b, kind: 'book' }));
+  // The excerpt is long enough to reach a regimen table that starts a page or two into the match.
+  const books = bookPassages(searchText, 6, subject, 4000).map((b) => ({ ...b, kind: 'book' }));
   // The drug label is first when the query names a drug: full label text beats abstracts for adverse-effect facts.
-  const labels = label.status === 'fulfilled' ? label.value.map((x) => ({ ...x, kind: 'label' })) : [];
+  // A label is kept only when its product name really carries a word the student asked about: "TRIPLE ANTIBIOTIC"
+  // answered a plain antibiotic question with cream warnings, and "PULMONARY NODULE" appeared for a TB regimen.
+  const labels = (label.status === 'fulfilled' ? label.value : [])
+    .filter((x) => labelFitsQuestion(x.title, plan.topic))
+    .map((x) => ({ ...x, kind: 'label' }));
   const sources = [
     ...labels,
     ...books,
-    ...web.map((x, i) => ({ title: x.title, url: x.url, text: (pages[i].status === 'fulfilled' && pages[i].value.length > 200 ? pages[i].value : x.snippet) || x.snippet, kind: 'web' })),
+    ...readPages.map((x) => ({ title: x.title, url: x.url, text: x.text, kind: 'web' })),
     ...papers.map((x) => ({ ...x, kind: 'europepmc' })),
-  ].filter((s) => s.text).map((s, i) => ({ n: i + 1, ...s }));
+  ]
+    .map((s) => ({ ...s, kind: normalizeSourceKind(s) }))
+    .filter((s) => s.text && (s.kind === 'book' || isPublicUrl(s.url)))
+    .map((s, i) => ({ n: i + 1, ...s }));
   // Never throw on an empty result: the caller has to be able to tell "searched, nothing found"
   // from "could not search". The old throw made an offline device look like a normal empty answer.
   //
   // `search` reports the INTERNET, not whether any source exists anywhere. The library is local, so
   // book passages survive an offline device — counting all sources would call a dead connection "ok".
-  const search = !reachable ? 'no-connection' : sources.some((s) => s.kind !== 'book') ? 'ok' : 'no-results';
+  const hasInternetSource = sources.some((s) => s.kind === 'web' && isPublicUrl(s.url));
+  const search = !reachable ? 'no-connection' : hasInternetSource ? 'ok' : 'no-results';
+  // A page that loaded is not a page that answers. This flag lets the answer say "the internet was
+  // reached but the passages do not state this" instead of implying the fact was checked.
+  // A page, paper abstract, or relevant named-drug label can each support the asked fact.
+  // Including all three avoids telling the tutor "no direct source" when the Europe PMC abstract
+  // or an exact drug label is what states the detail.
+  const evidenceTexts = [
+    ...readPages.map((x) => x.full),
+    ...papers.map((x) => x.text),
+    ...labels.map((x) => x.text),
+  ].filter(Boolean);
+  const coversQuestion = search === 'ok' && evidenceTexts.length
+    ? passagesCoverQuestion(evidenceTexts, plan.terms)
+    : false;
   if (!sources.length) {
     return {
       sources: [],
       retrievedAt: new Date().toISOString().slice(0, 10),
       search,
+      coversQuestion: false,
       detail: reachable
         ? 'The search ran but matched nothing usable for these words.'
         : 'The search could not reach the internet (no connection, firewall or timeout).',
@@ -134,8 +217,10 @@ export async function research(query, pageChars = 2500) {
       ? `The internet could not be reached, so no web source was checked. ${sources.length} passage${sources.length === 1 ? '' : 's'} from the student's own books were found and are numbered below.`
       : search === 'no-results'
         ? `The internet was reached but matched nothing usable. ${sources.length} passage${sources.length === 1 ? '' : 's'} from the student's own books were found and are numbered below.`
-        : '';
-  return { sources, retrievedAt: new Date().toISOString().slice(0, 10), search, detail };
+        : hasInternetSource && !coversQuestion
+          ? 'The internet was reached and pages were read, but none of the passages read so far states the detail asked for.'
+          : '';
+  return { sources, retrievedAt: new Date().toISOString().slice(0, 10), search, coversQuestion, detail };
 }
 
 /**
@@ -188,6 +273,13 @@ async function openFdaLabel(query) {
   return [{ title: `${name} (FDA drug label)`, url: 'https://open.fda.gov/apis/drug/label/', text: text.slice(0, 1200) }];
 }
 
+// A product form that is applied to the skin, not swallowed. Paired with a class word above,
+// this keeps a cream's label out of a systemic treatment question.
+const TOPICAL_FORM = /\b(cream|gel|ointment|cleanser|lotion|wash|shampoo|foam|patch|serum|spray|drops?)\b/i;
+// Words that name a drug CLASS, not one drug: a label for "TRIPLE ANTIBIOTIC CREAM" says nothing
+// about which systemic antibiotic to give for otitis media.
+const BROAD_CLASS = /^(antibiotic|antibacterial|antifungal|antiviral|antiseptic|steroid|corticosteroid|analgesic|pain|relief|acne|strength|triple|double|multi|all|purpose)\w*$/i;
+
 const NOT_A_DRUG = new Set(['adverse', 'effects', 'effect', 'side', 'drug', 'drugs', 'toxicity', 'treatment', 'features', 'feature',
   'criteria', 'causes', 'cause', 'diagnosis', 'diagnostic', 'management', 'clinical', 'disease', 'syndrome', 'investigation',
   'investigations', 'the', 'and', 'with', 'from', 'for', 'about', 'overview', 'complications', 'anatomy', 'physiology',
@@ -195,7 +287,27 @@ const NOT_A_DRUG = new Set(['adverse', 'effects', 'effect', 'side', 'drug', 'dru
   // "PAIN RELIEF HEAT THERAPY ROLL-ON" as the top source for "treatment of leprosy", because the
   // lookup matches the word anywhere in the generic name.
   'therapy', 'therapies', 'therapeutic', 'regimen', 'regimens', 'dose', 'doses', 'dosage', 'duration', 'monthly',
-  'daily', 'weekly', 'course', 'prophylaxis', 'prevention', 'control', 'programme', 'program']);
+  'daily', 'weekly', 'course', 'prophylaxis', 'prevention', 'control', 'programme', 'program',
+  // Qualifiers that describe the answer rather than name a drug. "maximum" in a dose question pulled
+  // "OXY MAXIMUM STRENGTH ACNE CREAM CLEANSER" in as the top label for a paracetamol question.
+  'maximum', 'minimum', 'strength', 'adult', 'adults', 'healthy', 'child', 'children', 'infant', 'neonate',
+  'recommended', 'exact', 'complete', 'current', 'recent', 'usual', 'single', 'total', 'initial', 'follow',
+  'oral', 'intravenous', 'intramuscular', 'topical', 'inhaled', 'route', 'frequency', 'interval', 'long',
+  'short', 'high', 'low', 'first', 'second', 'third', 'line', 'per', 'milligram', 'milligrams', 'gram', 'grams']);
+
+/**
+ * A drug label counts as an answer source only when its product name contains a specific word the
+ * student asked about. A cream for "antibiotic" or a label for "PULMONARY NODULE" is not evidence
+ * about the drug or regimen in the question, and putting it first pushed the real pages down.
+ */
+function labelFitsQuestion(title, topic) {
+  // Only use the plan topic, not generic wording in the question (e.g. "direct fact"), to
+  // identify a named drug. A generic prompt word must never make an unrelated FDA label relevant.
+  const name = String(title || '').toLowerCase();
+  const topicTerms = questionTerms(topic);
+  const specific = topicTerms.filter((term) => term.length >= 4 && !BROAD_CLASS.test(term));
+  return specific.some((term) => name.includes(term));
+}
 
 /**
  * The FDA label of a named drug in the query (for example "adverse effects of isoniazid"). Its adverse-reactions and
@@ -216,6 +328,9 @@ async function openFdaByDrug(query, net) {
     // The search is a substring match inside the product name, so "therapy" pulled in
     // "PAIN RELIEF HEAT THERAPY ROLL-ON". A real drug name must contain the query word as a whole word.
     if (!new RegExp(`(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`, 'i').test(name)) continue;
+    // A cream, gel or cleanser labelled with a drug CLASS name ("TRIPLE ANTIBIOTIC") is not the
+    // label for a systemic drug question; its adverse-reaction text would answer a different question.
+    if (TOPICAL_FORM.test(name) && BROAD_CLASS.test(word)) continue;
     const text = [hit.adverse_reactions?.[0], hit.warnings_and_cautions?.[0] || hit.warnings?.[0]]
       .filter(Boolean)
       .join(' ')
@@ -253,7 +368,7 @@ function usesDrugLabels(subject) {
 export async function literatureSources(query, subject) {
   const drugSubject = usesDrugLabels(subject);
   // Every subject first reads passages from the owned textbook library, then the drug label, then papers.
-  const book = bookPassages(query, 2, subject);
+  const book = bookPassages(query, 2, subject, 1800);
   const [label, subjectPapers] = await Promise.all([
     drugSubject ? openFdaLabel(query).catch(() => []) : Promise.resolve([]),
     europePmc(query, journalsFor(subject)).catch(() => []),

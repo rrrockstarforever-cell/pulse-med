@@ -1,5 +1,5 @@
 // Type declarations for server/web.mjs (web research and question evidence: DuckDuckGo + Europe PMC + openFDA).
-export type ResearchSourceKind = 'web' | 'europepmc';
+export type ResearchSourceKind = 'web' | 'europepmc' | 'book' | 'label';
 
 export interface ResearchSource {
   n: number;
@@ -16,9 +16,18 @@ export interface ResearchResult {
   search: 'ok' | 'no-results' | 'no-connection';
   /** One plain sentence for the model and the UI. Empty when sources were found. */
   detail: string;
+  /** False when pages loaded but none of them states the asked detail. */
+  coversQuestion?: boolean;
 }
 
-export declare function research(query: string, pageChars?: number): Promise<ResearchResult>;
+/** Optional extra context: the student's own question, the chat topic and the subject. */
+export interface ResearchContext {
+  question?: string;
+  topic?: string;
+  subject?: string;
+}
+
+export declare function research(query: string, pageChars?: number, context?: ResearchContext): Promise<ResearchResult>;
 
 export interface EvidenceSource {
   title: string;

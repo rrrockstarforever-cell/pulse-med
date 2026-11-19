@@ -43,6 +43,12 @@ function searchBadge(turn: ChatTurn): { text: string; className: string } {
       className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
     };
   }
+  if (turn.searchOutcome === 'no-direct-source') {
+    return {
+      text: 'Internet reached, but the pages read do not state this detail',
+      className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+    };
+  }
   if (turn.grounded || turn.searchOutcome === 'found') {
     return {
       text: 'Checked against sources',
@@ -197,9 +203,11 @@ function TurnView({ turn }: { turn: ChatTurn }) {
 export const GroundedChat: React.FC<{
   bankId: string;
   title: string;
+  /** The NEET-PG subject of this plan, when known. It steers the book search and the journal list. */
+  subject?: string;
   seed?: { id: number; text: string; context?: string } | null;
   onClose?: () => void;
-}> = ({ bankId, title, seed, onClose }) => {
+}> = ({ bankId, title, subject, seed, onClose }) => {
   const [turns, setTurns] = useState<ChatTurn[]>(() => loadChat(bankId));
   const [input, setInput] = useState('');
   // Voice input: records here and turns speech into text on this device (same as the AI tutor).
@@ -261,6 +269,7 @@ export const GroundedChat: React.FC<{
         const answer = await askGrounded({
           question: text,
           topic: title,
+          subject: subject || '',
           context,
           history,
           mode,
@@ -280,7 +289,7 @@ export const GroundedChat: React.FC<{
         }
       }
     },
-    [mode, title, turns]
+    [mode, title, subject, turns]
   );
 
   const send = useCallback(
@@ -328,7 +337,7 @@ export const GroundedChat: React.FC<{
       <header className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700">
         <div>
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Ask about this plan</h2>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Checked against your books and the internet</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Searches your books or the internet; each answer shows what the search actually did</p>
         </div>
         {onClose ? (
           <button

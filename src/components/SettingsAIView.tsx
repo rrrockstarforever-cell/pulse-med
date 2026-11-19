@@ -752,8 +752,26 @@ export const SettingsAIView: React.FC = () => {
       });
       await fetchOAuthStatus();
       if (activeProviderId === providerId) {
-        setActiveProviderId('gemini');
-        persistActiveProvider('gemini');
+        fetch('/api/oauth/status', {
+          headers: { 'x-session-id': getClientSessionId() },
+        })
+          .then((res) => res.json())
+          .then((statusData) => {
+            const next = ['chatgpt', 'claude', 'grok', 'gemini'].find(
+              (id) => id !== providerId && statusData?.providers?.[id]?.connected
+            );
+            if (next) {
+              setActiveProviderId(next);
+              persistActiveProvider(next as any);
+            } else {
+              localStorage.removeItem('ai.activeProvider');
+              setActiveProviderId('');
+            }
+          })
+          .catch(() => {
+            localStorage.removeItem('ai.activeProvider');
+            setActiveProviderId('');
+          });
       }
     } catch (err) {
       console.error('Logout error:', err);
@@ -923,7 +941,7 @@ export const SettingsAIView: React.FC = () => {
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-semibold">Active Provider:</span>
                 <span className="font-mono font-bold text-[#0f8b8d] truncate max-w-[60%] text-right">
-                  {activeProviderId} · {models[activeProviderId] || getEffectiveModel(activeProviderId as any)}
+                  {activeProviderId ? `${activeProviderId} · ${models[activeProviderId] || getEffectiveModel(activeProviderId as any)}` : 'none · connect a provider, then press Use Engine'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed max-md:line-clamp-2">

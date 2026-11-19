@@ -2,15 +2,7 @@ import { aiComplete, getActiveProvider, getEffectiveModel, NOT_CONNECTED_MESSAGE
 
 export type GroundMode = 'both' | 'books' | 'web';
 
-/**
- * What the source lookup actually did. The assistant is told this, and says it to the student,
- * so a failed internet check can never be presented as a check that was made.
- *   found        — the internet search returned usable sources
- *   empty        — the search ran, the internet answered, nothing matched
- *   unavailable  — the internet could not be reached and no source came back at all
- *   books-only   — the internet could not be reached (or books were chosen), but book passages exist
- */
-export type SearchOutcome = 'found' | 'empty' | 'unavailable' | 'books-only';
+export type SearchOutcome = 'found' | 'no-direct-source' | 'empty' | 'unavailable' | 'books-only';
 
 export interface Source {
   n: number;
@@ -45,12 +37,18 @@ interface ResearchResponse {
   /** 'ok' | 'empty' | 'unavailable' | 'local' — the server's own report of the search. */
   search?: string;
   searchDetail?: string;
+  /** Whether the pages read actually share the asked words. */
+  coversQuestion?: boolean;
 }
 
 interface LookupResult {
   sources: RawSource[];
   /** The server's own verdict: 'ok' | 'no-results' | 'no-connection' | 'local' | 'empty' | 'unavailable'. */
   search: string;
+  /** True when the pages read actually share the asked words; false when only unrelated pages loaded. */
+  coversQuestion?: boolean;
+  /** The server's plain-language account of what it did. */
+  detail?: string;
 }
 
 const UNREACHABLE = new Set(['no-connection', 'unavailable']);
@@ -60,25 +58,42 @@ export function bookOrWebMode(mode: GroundMode): boolean {
   return mode === 'books';
 }
 
-/**
- * Turns the two lookup verdicts into one honest outcome. Kept pure and exported so it can be
- * tested directly: a book passage found on this device is never proof that the internet was checked.
- */
 export function decideOutcome(booksMode: boolean, webSearch: string, sourceCount: number): SearchOutcome {
   if (booksMode) return sourceCount > 0 ? 'books-only' : 'empty';
   if (UNREACHABLE.has(webSearch)) return sourceCount > 0 ? 'books-only' : 'unavailable';
   return sourceCount > 0 ? 'found' : 'empty';
 }
 
-/**
- * What to tell the assistant about the search, naming each side separately.
- * "The internet returned 4 sources" must never be said when those four came off the local disk.
- */
+/** Asks the outcome whether the internet really supported the answer, not just whether a page loaded. */
+export function decideGroundedOutcome(
+  mode: GroundMode,
+  webSearch: string,
+  bookCount: number,
+  webCount: number,
+  coversQuestion: boolean,
+): SearchOutcome {
+  if (mode === 'books') return bookCount > 0 ? 'books-only' : 'empty';
+  if (UNREACHABLE.has(webSearch)) return bookCount > 0 ? 'books-only' : 'unavailable';
+  if (webCount === 0) return bookCount > 0 ? 'books-only' : 'empty';
+  // Pages loaded but none of them states the asked detail: that is not "checked against sources".
+  if (!coversQuestion) return 'no-direct-source';
+  return 'found';
+}
+
+export function reconcileSearchOutcome(outcome: SearchOutcome, answer: string): SearchOutcome {
+  if (outcome !== 'found') return outcome;
+  const admitsMissingEvidence =
+    /\bsearch did not return a direct source\b/i.test(String(answer || '')) ||
+    /\bfrom general knowledge\s*\(not verified\)\s*:/i.test(String(answer || ''));
+  return admitsMissingEvidence ? 'no-direct-source' : outcome;
+}
+
 export function describeSearch(
   mode: GroundMode,
   webSearch: string,
   bookCount: number,
   webCount: number,
+  coversQuestion = true,
 ): string {
   const web =
     mode === 'books'
@@ -86,12 +101,14 @@ export function describeSearch(
       : UNREACHABLE.has(webSearch)
         ? 'The internet search could not run: the device could not reach the internet (no connection, a firewall, or a timeout). No web page was checked.'
         : webCount > 0
-          ? `The internet search returned ${webCount} usable web source${webCount === 1 ? '' : 's'}.`
+          ? coversQuestion
+            ? `The internet search returned ${webCount} usable web source${webCount === 1 ? '' : 's'}.`
+            : `The internet was reached and ${webCount} web page${webCount === 1 ? ' was' : 's were'} read, but none of the passages read states the detail asked for.`
           : 'The internet search ran and reached the internet, but matched nothing usable for these words.';
   const books =
     mode === 'books' || bookCount > 0
       ? bookCount > 0
-        ? `${bookCount} passage${bookCount === 1 ? '' : 's'} from the student's own books were found on this device.`
+        ? `${bookCount} passage${bookCount === 1 ? '' : 's'} from the student's own book${bookCount === 1 ? '' : 's'} ${bookCount === 1 ? 'was' : 'were'} found on this device.`
         : "The student's own books were searched and nothing matched."
       : '';
   return [web, books].filter(Boolean).join(' ');
@@ -99,8 +116,133 @@ export function describeSearch(
 
 const STORAGE_PREFIX = 'pulse.planchat.v1.';
 const MAX_TURNS = 40;
-const MAX_SOURCE_TEXT = 1800;
-const MAX_QUERY = 220;
+// The server now sends the whole page. Do not cut it back to the opening paragraph:
+// the treatment sentence can sit past the first 1800 characters.
+const MAX_SOURCE_TEXT = 100_000;
+// A search string still has a sane bound, but the student's own words are not cut away to make it:
+// the whole question is sent separately and the server builds its own short variant from it.
+const MAX_SEARCH_QUERY = 400;
+
+export function normalizeSourceKind(
+  item: { kind?: string; url?: string },
+  defaultKind: 'book' | 'web',
+): 'book' | 'web' {
+  void defaultKind;
+  const url = (item && item.url ? item.url : '').trim();
+  const kind = (item && item.kind ? item.kind : '').trim().toLowerCase();
+  if (/^(book|mybooks|mylib|file|internal):/i.test(url)) return 'book';
+  if (/^https?:\/\//i.test(url)) return kind === 'book' ? 'book' : 'web';
+  return 'web';
+}
+
+/**
+ * A follow-up like "confirm this on the internet please" is meaningless on its own. When the
+ * student's message reads like a follow-up (short, confirmation-style, no fresh subject matter)
+ * and there is at least one earlier user turn, fold the most recent substantive user question back
+ * in so search ranking and the model both see what the follow-up actually refers to.
+ *
+ * Purely lexical. No network. No disease- or drug-specific rules.
+ */
+const FOLLOW_UP_TRIGGER_RE =
+  /^(confirm|verify|check|same|that|this|is that|is this|what about|explain\s+(this|that|it|its|the)\b|really\?)/i;
+const GENERIC_CONFIRMATION_RE = /^(confirm|verify|check|same|really\?)/i;
+
+// Words that carry no medical content. Everything else counts as a content term for the
+// follow-up test: drug names, doses, disease names, mechanisms, etc. all stay content.
+const NON_CONTENT_WORDS = new Set<string>([
+  'confirm', 'verify', 'check', 'please', 'internet', 'online', 'really',
+  'the', 'that', 'this', 'these', 'those', 'same', 'with', 'from', 'into', 'over', 'under', 'about',
+  'what', 'when', 'where', 'which', 'who', 'why', 'how',
+  'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'do', 'does', 'did', 'done', 'can', 'could', 'should', 'would', 'will', 'may', 'might', 'must',
+  'you', 'your', 'we', 'our', 'us', 'i', 'me', 'my', 'mine',
+  'it', 'its', 'they', 'them', 'their', 'he', 'she', 'his', 'her',
+  'a', 'an', 'of', 'to', 'in', 'on', 'at', 'by', 'or', 'but', 'not', 'no', 'yes',
+  'if', 'so', 'then', 'than', 'as', 'also', 'and', 'more', 'less', 'again', 'still', 'just', 'only',
+  'even', 'too', 'very', 'here', 'there', 'now',
+  'tell', 'say', 'give', 'show', 'need', 'want', 'know', 'search', 'look', 'find', 'source', 'sources',
+  'question', 'answer', 'quick', 'quickly', 'actually', 'first', 'second', 'third', 'last', 'next',
+  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+]);
+
+function countContentTerms(text: string): number {
+  const tokens = String(text || '').toLowerCase().match(/[a-z][a-z0-9-]*/g) ?? [];
+  let count = 0;
+  for (const token of tokens) {
+    if (token.length < 3) continue;
+    if (NON_CONTENT_WORDS.has(token)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+export function resolveFollowUpForChat(
+  question: string,
+  history: ChatTurn[],
+): { effectiveQuestion: string; wasFollowUp: boolean } {
+  const q = String(question ?? '').trim();
+  if (!q) return { effectiveQuestion: question, wasFollowUp: false };
+  if (!FOLLOW_UP_TRIGGER_RE.test(q)) return { effectiveQuestion: question, wasFollowUp: false };
+  if (countContentTerms(q) > 2) return { effectiveQuestion: question, wasFollowUp: false };
+
+  const turns = Array.isArray(history) ? history : [];
+  const priorUsers = turns.filter(
+    (turn) =>
+      turn && turn.role === 'user' && typeof turn.text === 'string' && turn.text.trim().length > 0,
+  );
+  if (priorUsers.length === 0) return { effectiveQuestion: question, wasFollowUp: false };
+
+  // Skip earlier generic confirmation requests; take the most recent substantive question.
+  let prevQuestion = '';
+  for (let i = priorUsers.length - 1; i >= 0; i -= 1) {
+    const prevText = priorUsers[i].text.trim();
+    const prevIsGenericConfirmation =
+      GENERIC_CONFIRMATION_RE.test(prevText) && countContentTerms(prevText) <= 2;
+    if (prevIsGenericConfirmation) continue;
+    prevQuestion = prevText;
+    break;
+  }
+  if (!prevQuestion) return { effectiveQuestion: question, wasFollowUp: false };
+
+  const separator = ' — ';
+  const tail = `${separator}${q}`;
+  const budget = Math.max(0, 400 - tail.length);
+  const head =
+    prevQuestion.length <= budget ? prevQuestion : prevQuestion.slice(0, budget).trimEnd();
+  const combined = (head ? `${head}${tail}` : q).trim();
+  const effectiveQuestion = combined.length > 400 ? combined.slice(0, 400) : combined;
+  return { effectiveQuestion, wasFollowUp: true };
+}
+
+export function buildSystemPrompt(opts: {
+  searchReport: string;
+  searchBlocker: string;
+  hasContext: boolean;
+}): string {
+  const { searchReport, searchBlocker } = opts;
+  // hasContext is accepted for signature stability; today no rule varies by it.
+  void opts.hasContext;
+  return [
+    'You are a careful NEET-PG and INI-CET tutor sitting beside a study note the student is reading.',
+    'The app runs a source search for every question before you answer, and it reports the real outcome below. You have no search tool of your own: what the app found is all there is.',
+    'Never say you searched, browsed or "checked the internet" unless the report says a search ran. Never say you cannot search either — say what the report says happened. If no search could run, still give a short, useful answer from your own knowledge, clearly labelled as such.',
+    'Use ONLY the numbered sources for every factual claim, and cite them like [1] or [2] right after the claim.',
+    'If the numbered sources do not contain the answer, say "The search did not return a direct source for this." in your first sentence, then give at most a short answer clearly labelled "From general knowledge (not verified):".',
+    'Never invent numbers, doses, criteria, or page numbers.',
+    'If sources disagree, say so.',
+    'For drug regimens, doses, and durations, a current official guideline page (WHO, CDC, NLEP, MoHFW, DGHS, ICMR) wins over an older book passage. Say which source you followed. A drug missing from a short book excerpt is not evidence that the drug is left out. Do not invent a dose the sources do not state.',
+    'Use simple words.',
+    'Start with the direct answer in plain words, in ONE bold line like "**Answer: ...**". Then add only what the question needs: a short paragraph for a single fact, "- " bullets for several separate points, a markdown table only when the question asks to compare things, numbered steps only for a procedure, and a ```flow fenced block (one step per line, a branch written "condition -> next step", a decision written "? question") only when the path really branches. A one-fact answer should be one to three sentences and needs no headings.',
+    'Keep it as short as it can be while answering every part of the question; go past about 220 words only if the student asks for a full note. A one-line pearl written as "> Pearl: ..." is welcome when there is a real exam point to remember; skip it otherwise. Do not use any other markdown (no images, no HTML).',
+    'Say which source is a book and which is the internet when you use them.',
+    "When two numbered sources give different regimens, doses, dates or jurisdiction rules, STATE the conflict plainly and say which one is current for the question's country and date. Never present an older complete textbook table as current guidance just because it is complete.",
+    'A drug missing from a short book excerpt is not evidence that the drug is absent or excluded. Say the excerpt is incomplete instead of inferring an exclusion.',
+    'Every causal "because …" clause, every dose, every age threshold and every universal claim ("all", "never", "always") needs support from a numbered source. If no source supports it, write "not stated in the sources" and stop.',
+    'If the student\'s question is a beginner question ("in simple language", "for a first-year"), start with the plain mechanism and hold back advanced exceptions; do not open with a false either-or.',
+    'For a genuine side-by-side comparison use a markdown table; otherwise do not use a table.',
+    `Source search result: ${searchReport}${searchBlocker}`,
+  ].join(' ');
+}
 
 function makeId(): string {
   try {
@@ -158,45 +300,95 @@ export function clearChat(bankId: string): void {
   }
 }
 
-/**
- * One lookup against the app's own search route.
- *
- * The search verdict is kept, not thrown away: a network error, a non-OK response or an unreadable
- * reply all mean the search never ran. Returning a bare empty array for all of them is what let the
- * assistant claim it had checked the internet when it had not.
- */
-async function fetchResearchSources(query: string, books: boolean, signal?: AbortSignal): Promise<LookupResult> {
+async function fetchResearchSources(
+  request: { query: string; question: string; topic: string; subject: string },
+  books: boolean,
+  signal?: AbortSignal,
+): Promise<LookupResult> {
   try {
     const response = await fetch('/api/web/research', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(books ? { query, books: true, pageChars: 2500 } : { query, pageChars: 2500 }),
+      // The whole question, the topic and the subject travel beside the short search string,
+      // so the server can rank pages by the fact that was asked for.
+      body: JSON.stringify({ ...request, books: books || undefined, pageChars: 6000 }),
       signal,
     });
     if (!response.ok) return { sources: [], search: 'unavailable' };
     const data: ResearchResponse | null = await response.json().catch(() => null);
     if (!data || data.success !== true || !Array.isArray(data.sources)) return { sources: [], search: 'unavailable' };
     // The server names the outcome; the client reports it rather than guessing from the count.
-    return { sources: data.sources, search: typeof data.search === 'string' ? data.search : 'ok' };
+    return {
+      sources: data.sources,
+      search: typeof data.search === 'string' ? data.search : 'ok',
+      coversQuestion: data.coversQuestion === true,
+      detail: typeof data.searchDetail === 'string' ? data.searchDetail : '',
+    };
   } catch {
     // A real abort is handled by the caller; anything else is a dead connection.
     return { sources: [], search: 'unavailable' };
   }
 }
 
-function normalizeSources(raw: RawSource[], kind: 'book' | 'web', startAt: number): Source[] {
+function questionWindow(text: string, question: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const terms = Array.from(
+    new Set((question.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((term) => term.length >= 3)),
+  );
+  const lower = text.toLowerCase();
+  const hits: number[] = [];
+  for (const term of terms) {
+    let at = lower.indexOf(term);
+    while (at !== -1 && hits.length < 50) {
+      hits.push(at);
+      at = lower.indexOf(term, at + 1);
+    }
+  }
+  if (hits.length === 0) {
+    const start = Math.max(0, Math.floor((text.length - limit) / 2));
+    return text.slice(start, start + limit);
+  }
+  hits.sort((a, b) => a - b);
+  const first = hits[0];
+  const last = hits[hits.length - 1];
+  const span = last - first + 1;
+  const start = span <= limit
+    ? first - Math.floor((limit - span) / 2)
+    : first - Math.floor(limit / 2);
+  const clampedStart = Math.max(0, Math.min(start, text.length - limit));
+  return text.slice(clampedStart, clampedStart + limit);
+}
+
+function isSafeWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(String(url || '').trim());
+}
+
+export function normalizeSources(
+  raw: RawSource[],
+  kind: 'book' | 'web',
+  startAt: number,
+  question = '',
+): Source[] {
   const out: Source[] = [];
   for (const item of raw) {
     if (out.length >= 4) break;
-    const title = (item.title ?? '').trim() || (kind === 'book' ? 'Book source' : 'Web source');
-    const text = (item.text ?? '').trim().slice(0, MAX_SOURCE_TEXT);
     const url = (item.url ?? '').trim();
+    const sourceKind = normalizeSourceKind(item, kind);
+    if (sourceKind === 'web' && !isSafeWebUrl(url)) continue;
+    if (kind === 'web' && sourceKind === 'book') continue;
+    const title =
+      (item.title ?? '').trim() || (sourceKind === 'book' ? 'Book source' : 'Web source');
+    const fullText = (item.text ?? '').trim();
+    const truncated = fullText.length > MAX_SOURCE_TEXT;
+    const text = truncated
+      ? `${questionWindow(fullText, question, MAX_SOURCE_TEXT - 40)}\n…[text truncated]`
+      : fullText;
     out.push({
       n: startAt + out.length,
       title,
       url,
       text,
-      kind,
+      kind: sourceKind,
     });
   }
   return out;
@@ -230,57 +422,74 @@ function formatSources(sources: Source[]): string {
 export async function askGrounded(opts: {
   question: string;
   topic: string;
+  /** The NEET-PG subject, when the screen knows it. Steers the book search and the journal list. */
+  subject?: string;
   context?: string;
   history: ChatTurn[];
   mode: GroundMode;
   signal?: AbortSignal;
 }): Promise<ChatTurn> {
-  const { question, topic, context, history, mode, signal } = opts;
+  const { question, topic, subject = '', context, history, mode, signal } = opts;
 
   if (signal?.aborted) return errorTurn('Stopped.', mode);
 
-  const query = `${topic} ${question}`.trim().slice(0, MAX_QUERY);
+  // Resolve a follow-up like "confirm this on the internet please" against the most recent
+  // substantive user question. The effective question goes to the server for ranking; the
+  // short original question still keeps its search hint in `query`.
+  const resolved = resolveFollowUpForChat(question, history);
+  const request = {
+    question: resolved.effectiveQuestion,
+    topic: resolved.wasFollowUp ? '' : topic,
+    subject,
+    query: `${question} ${topic}`.replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_QUERY),
+  };
+
   let rawBooks: RawSource[] = [];
   let rawWeb: RawSource[] = [];
   // What each lookup reported. Kept apart from the sources, because a book passage found locally
   // must never be read as "the internet was checked".
   let bookSearch = 'local';
   let webSearch = 'ok';
+  let coversQuestion = false;
 
   if (mode === 'both') {
     const [books, web] = await Promise.all([
-      fetchResearchSources(query, true, signal),
-      fetchResearchSources(query, false, signal),
+      fetchResearchSources(request, true, signal),
+      fetchResearchSources(request, false, signal),
     ]);
     rawBooks = books.sources;
     rawWeb = web.sources;
     bookSearch = books.search;
     webSearch = web.search;
+    coversQuestion = web.coversQuestion === true;
   } else if (mode === 'books') {
-    const books = await fetchResearchSources(query, true, signal);
+    const books = await fetchResearchSources(request, true, signal);
     rawBooks = books.sources;
     bookSearch = books.search;
   } else {
-    const web = await fetchResearchSources(query, false, signal);
+    const web = await fetchResearchSources(request, false, signal);
     rawWeb = web.sources;
     webSearch = web.search;
+    coversQuestion = web.coversQuestion === true;
   }
 
   if (signal?.aborted) return errorTurn('Stopped.', mode);
 
-  const bookSources = normalizeSources(rawBooks, 'book', 1);
-  const webSources = normalizeSources(rawWeb, 'web', bookSources.length + 1);
+  const bookSources = normalizeSources(rawBooks, 'book', 1, question);
+  const webSources = normalizeSources(rawWeb, 'web', bookSources.length + 1, question);
   const sources = [...bookSources, ...webSources];
 
-  const outcome = decideOutcome(bookOrWebMode(mode), webSearch, sources.length);
+  const outcome = decideGroundedOutcome(mode, webSearch, bookSources.length, webSources.length, coversQuestion);
 
-  const searchReport = describeSearch(mode, webSearch, bookSources.length, webSources.length);
+  const searchReport = describeSearch(mode, webSearch, bookSources.length, webSources.length, coversQuestion);
   const searchBlocker =
     outcome === 'unavailable'
       ? ' Say this plainly in your first sentence.'
-      : outcome === 'books-only' && mode !== 'books'
-        ? ' Do not present the book passages as an internet check.'
-        : '';
+      : outcome === 'no-direct-source'
+        ? ' Say plainly that the internet was reached but the passages read do not state this detail.'
+        : outcome === 'books-only' && mode !== 'books'
+          ? ' Do not present the book passages as an internet check.'
+          : '';
 
   const provider = getActiveProvider();
   if (!provider) return errorTurn(NOT_CONNECTED_MESSAGE, mode);
@@ -293,19 +502,7 @@ export async function askGrounded(opts: {
   }
 
   const hasContext = Boolean(context && context.trim());
-  const system = [
-    'You are a careful NEET-PG and INI-CET tutor sitting beside a study note the student is reading.',
-    'The app runs a source search for every question before you answer, and it reports the real outcome below. You have no search tool of your own: what the app found is all there is.',
-    'Never say you searched, browsed or "checked the internet" unless the report says a search ran. Never say you cannot search either — say what the report says happened. If no search could run, still give a short, useful answer from your own knowledge, clearly labelled as such.',
-    'Use ONLY the numbered sources for every factual claim, and cite them like [1] or [2] right after the claim.',
-    'If the numbered sources do not contain the answer, say "The search did not return a direct source for this." in your first sentence, then give at most a short answer clearly labelled "From general knowledge (not verified):".',
-    'Never invent numbers, doses, criteria, or page numbers.',
-    'If sources disagree, say so.',
-    'Use simple words.',
-    'Format the answer in markdown so it is easy to scan, and keep it under 220 words unless the student asks for more. Start with ONE bold line like "**Answer: ...**" that gives the direct answer. Then use short sections with "## " headings (for example "## Key points", "## Why", "## Exam trap") and "- " bullets, never long paragraphs. When comparing two or more things (drugs, diseases, stages, criteria) use a markdown table with a header row. When the answer is a process, a management pathway or a decision sequence, give it as a flow chart inside a fenced block that starts with a line ```flow and ends with ```, one step per line, and write a branch as "condition -> next step" and a decision question as "? question". End with a one-line pearl written as "> Pearl: ..." and, only if there is a common mistake, "> Trap: ...". Keep citations like [1] right after the claims. Do not use any other markdown (no images, no HTML).',
-    'Say which source is a book and which is the internet when you use them.',
-    `Source search result: ${searchReport}${searchBlocker}`,
-  ].join(' ');
+  const system = buildSystemPrompt({ searchReport, searchBlocker, hasContext });
 
   const userMessage = [
     `Topic: ${topic}`,
@@ -318,7 +515,7 @@ export async function askGrounded(opts: {
     .join('\n\n');
 
   try {
-    const answer = await aiComplete({
+    const rawAnswer = await aiComplete({
       system,
       messages: [{ role: 'user', content: userMessage }],
       effort: 'medium',
@@ -327,15 +524,17 @@ export async function askGrounded(opts: {
       model,
       signal,
     });
+    const answerText = rawAnswer.trim() || 'I could not write an answer. Please try again.';
+    const finalOutcome = reconcileSearchOutcome(outcome, answerText);
 
     return {
       id: makeId(),
       role: 'assistant',
-      text: answer.trim() || 'I could not write an answer. Please try again.',
+      text: answerText,
       sources,
       mode,
-      grounded: sources.length > 0,
-      searchOutcome: outcome,
+      grounded: finalOutcome === 'found',
+      searchOutcome: finalOutcome,
     };
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {

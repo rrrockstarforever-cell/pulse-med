@@ -24,6 +24,7 @@ import {
 } from './server/oauth.mjs';
 import { aiLog } from './server/oauth.mjs';
 import { research as webResearch, literatureSources, SOURCE_REGISTRY } from './server/web.mjs';
+import { questionTerms, passageWindow } from './server/searchPlanner.mjs';
 import { pyqWeights, pyqSource } from './server/pyqFrequency.mjs';
 import { searchMyBooks, myBooksStatus } from './server/mybooks.mjs';
 import { searchImages, fetchImage, REFERENCE_SOURCES, buildVisionVerificationPrompt, parseVisionVerdict } from './server/images.mjs';
@@ -2730,16 +2731,31 @@ app.post('/api/qa/refine-batch', async (req: Request, res: Response) => {
 // A bare success flag for all three made a dead connection look like a normal empty answer.
 app.post('/api/web/research', async (req: Request, res: Response) => {
   const query = typeof req.body?.query === 'string' ? req.body.query : '';
+  // Optional and additive: the plan chat sends the student's exact question, the topic and the subject
+  // apart from the short search string, so a long question is never clipped into a vague search.
+  const question = typeof req.body?.question === 'string' ? req.body.question.slice(0, 1200) : '';
+  const topic = typeof req.body?.topic === 'string' ? req.body.topic.slice(0, 300) : '';
+  const subject = typeof req.body?.subject === 'string' ? req.body.subject.slice(0, 120) : '';
   try {
     const pageChars = Math.min(30000, Math.max(2500, Number(req.body?.pageChars) || 2500));
     // My books mode: the sources are the learner's own books only, the subject's book first and then the others.
     // This is a local database read, so the internet is never touched and never reported as unavailable.
     if (req.body?.books) {
-      const found = searchMyBooks(query, typeof req.body?.subject === 'string' ? req.body.subject : '', 6, Math.min(pageChars, 2500));
-      return res.json({ success: true, search: found.length ? 'local' : 'empty', sources: found.map((f: any) => ({ title: `${f.title} — ${f.heading}`, url: `mybooks:${f.title}`, text: f.text, kind: 'book' })), retrievedAt: new Date().toISOString() });
+      const terms = questionTerms(question || query);
+      // The excerpt is chosen around the asked words, not cut at 2,500 characters from the start:
+      // a regimen line can sit further into the section than that, and the cut silently removed it.
+      const wanted = Math.min(12000, Math.max(pageChars, 6000));
+      const found = searchMyBooks(question || query, subject, 6, wanted);
+      const sources = found.map((f: any) => ({
+        title: `${f.title} — ${f.heading}`,
+        url: `mybooks:${f.title}`,
+        text: f.text.length > 6000 ? passageWindow(f.text, terms, 6000) : f.text,
+        kind: 'book',
+      }));
+      return res.json({ success: true, search: sources.length ? 'local' : 'empty', sources, retrievedAt: new Date().toISOString() });
     }
-    const out = await webResearch(query, pageChars);
-    return res.json({ success: true, search: out.search ?? 'ok', searchDetail: out.detail || '', sources: out.sources, retrievedAt: out.retrievedAt });
+    const out: any = await webResearch(query, pageChars, { question, topic, subject });
+    return res.json({ success: true, search: out.search ?? 'ok', searchDetail: out.detail || '', coversQuestion: out.coversQuestion === true, sources: out.sources, retrievedAt: out.retrievedAt });
   } catch (err: any) {
     return res.status(502).json({ success: false, search: 'unavailable', searchDetail: err?.message || 'Web research failed.' });
   }

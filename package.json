@@ -1,7 +1,7 @@
 {
   "name": "pulse-med",
   "private": true,
-  "version": "1.0.106",
+  "version": "1.0.108",
   "type": "module",
   "scripts": {
     "predev": "node tools/copy-tesseract-assets.mjs",
@@ -18,6 +18,7 @@
     "debug:center": "node tools/debug-center/server.mjs",
     "debug:center:launch": "node tools/debug-center/launch.mjs",
     "verify:debug-center": "node tools/debug-center/verify.mjs",
+    "nemotron:gateway": "tsx server/nemotron/gateway.ts",
     "check:secrets": "node tools/check-secrets.mjs"
   },
   "dependencies": {

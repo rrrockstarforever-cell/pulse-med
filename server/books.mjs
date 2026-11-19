@@ -80,6 +80,11 @@ export function searchLibrary(query, subject = '', limit = 2, excerptChars = 700
 }
 
 /** Passages from the library for a query, on a subject. Empty when the library file is not present. */
-export function bookPassages(query, limit = 2, subject = '') {
-  return searchLibrary(query, subject, limit);
+/**
+ * Matching pages from the library, as passages on a subject.
+ * `excerptChars` is passed through: a regimen table can start past the first 700 characters,
+ * and a short excerpt there showed the chapter heading instead of the dose.
+ */
+export function bookPassages(query, limit = 2, subject = '', excerptChars = 700) {
+  return searchLibrary(query, subject, limit, excerptChars);
 }

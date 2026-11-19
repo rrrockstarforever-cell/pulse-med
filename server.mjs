@@ -619,8 +619,164 @@ function searchLibrary(query, subject = "", limit = 2, excerptChars = 700) {
     };
   });
 }
-function bookPassages(query, limit = 2, subject = "") {
-  return searchLibrary(query, subject, limit);
+function bookPassages(query, limit = 2, subject = "", excerptChars = 700) {
+  return searchLibrary(query, subject, limit, excerptChars);
+}
+
+// server/searchPlanner.mjs
+var STOP2 = /* @__PURE__ */ new Set([
+  "what",
+  "which",
+  "does",
+  "that",
+  "this",
+  "with",
+  "from",
+  "have",
+  "were",
+  "their",
+  "your",
+  "about",
+  "into",
+  "when",
+  "while",
+  "there",
+  "these",
+  "those",
+  "would",
+  "could",
+  "should",
+  "being",
+  "given",
+  "shows",
+  "patient",
+  "patients",
+  "they",
+  "them",
+  "been",
+  "make",
+  "makes",
+  "most",
+  "some",
+  "only",
+  "other",
+  "than",
+  "such",
+  "also",
+  "after",
+  "before",
+  "will",
+  "used",
+  "where",
+  "among",
+  "through",
+  "whose",
+  "whom",
+  "have",
+  "been",
+  // Generic testing/teaching wording carries little search meaning; the named topic should lead.
+  "direct",
+  "fact",
+  "student",
+  "students",
+  "must",
+  "know",
+  "knows",
+  "including",
+  "name",
+  "number"
+]);
+function questionTerms(text) {
+  const original = String(text || "");
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const terms = original.toLowerCase().match(/[a-z0-9][a-z0-9-]{3,}/g) || [];
+  const acronyms = original.match(/\b[A-Z][A-Z0-9]{1,7}\b/g) || [];
+  for (const raw of [...terms, ...acronyms]) {
+    const term = raw.toLowerCase();
+    if (STOP2.has(term) || ["the", "and", "for", "but", "not", "are", "how", "why", "who", "can", "all"].includes(term) || seen.has(term)) continue;
+    seen.add(term);
+    out.push(term);
+  }
+  return out;
+}
+function planResearchQuery({ question, topic, subject, query } = {}) {
+  const asked = String(question || "").trim();
+  const fallback = String(query || "").trim();
+  const fullQuestion = asked || fallback;
+  const topicText = String(topic || "").trim();
+  const subjectText = String(subject || "").trim();
+  const askedTerms = questionTerms(fullQuestion);
+  const topicTerms = questionTerms(topicText).filter((term) => !askedTerms.includes(term));
+  const terms = [...askedTerms, ...topicTerms].slice(0, 24);
+  const lead = pickDistinctive(askedTerms.length ? askedTerms : topicTerms, 12);
+  const subjectBit = subjectText && !lead.some((term) => subjectText.toLowerCase().includes(term)) ? [subjectText] : [];
+  const variant = fitWords([...lead, ...topicTerms.slice(0, 4), ...subjectBit], 200) || fullQuestion.slice(0, 200);
+  return {
+    question: fullQuestion,
+    topic: topicText,
+    subject: subjectText,
+    terms,
+    searchVariant: variant
+  };
+}
+function pickDistinctive(terms, n) {
+  if (terms.length <= n) return terms;
+  const counts = /* @__PURE__ */ new Map();
+  for (const term of terms) counts.set(term, (counts.get(term) || 0) + 1);
+  const ranked = terms.map((term, index) => ({ term, index, weight: term.length + counts.get(term) * 2 })).sort((a, b) => b.weight - a.weight || a.index - b.index).slice(0, n).sort((a, b) => a.index - b.index).map((x) => x.term);
+  return ranked;
+}
+function fitWords(words2, limit) {
+  let out = "";
+  for (const word of words2) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length > limit) break;
+    out = next;
+  }
+  return out;
+}
+function rankWebHits(hits, plan, isTrusted = () => false) {
+  const terms = plan?.terms?.length ? plan.terms : questionTerms(plan?.question || "");
+  return (hits || []).map((hit, index) => {
+    const hay = `${hit?.title || ""} ${hit?.snippet || ""} ${hit?.url || ""}`.toLowerCase();
+    const overlap = terms.filter((term) => hay.includes(term)).length;
+    const trusted = isTrusted(hit?.url) ? 1 : 0;
+    return { ...hit, overlap, trusted, score: overlap * 10 + trusted, index };
+  }).sort((a, b) => b.score - a.score || a.index - b.index);
+}
+function termHits(text, terms) {
+  const lower = String(text || "").toLowerCase();
+  return (terms || []).filter((term) => term && lower.includes(String(term).toLowerCase())).length;
+}
+function passageWindow(text, terms, limit = 12e3) {
+  const raw = String(text || "");
+  const cap = Math.max(400, Number(limit) || 12e3);
+  if (raw.length <= cap) return raw;
+  const words2 = (terms || []).map((term) => String(term).toLowerCase()).filter((term) => term.length >= 3);
+  if (!words2.length) return raw.slice(0, cap);
+  const lower = raw.toLowerCase();
+  const step = 500;
+  let bestAt = 0;
+  let bestScore = -1;
+  for (let at = 0; at < raw.length; at += step) {
+    const stretch = lower.slice(at, at + cap);
+    let score = 0;
+    for (const word of words2) if (stretch.includes(word)) score += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestAt = at;
+    }
+  }
+  if (bestScore <= 0) return raw.slice(0, cap);
+  return raw.slice(bestAt, bestAt + cap);
+}
+function passagesCoverQuestion(texts, questionOrTerms) {
+  const terms = Array.isArray(questionOrTerms) ? questionOrTerms : questionTerms(questionOrTerms);
+  const distinctive = terms.filter((term) => term.length >= 5);
+  const need = distinctive.length <= 1 ? distinctive.length : 2;
+  if (!need) return (texts || []).some((text) => String(text || "").trim().length > 40);
+  return (texts || []).some((text) => termHits(text, distinctive) >= need);
 }
 
 // server/web.mjs
@@ -692,40 +848,98 @@ async function europePmc(query, journals = [], net2) {
     text: `${r.journalTitle || ""} ${r.pubYear || ""}. ${strip(r.abstractText)}`.slice(0, 1500)
   }));
 }
-async function pageText(url, chars = 2500, net2) {
+function pdfPageText(items) {
+  const rows = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    const str = String(item?.str || "").trim();
+    if (!str) continue;
+    const y = Math.round((item.transform?.[5] ?? 0) / 3) * 3;
+    const x = item.transform?.[4] ?? 0;
+    if (!rows.has(y)) rows.set(y, []);
+    rows.get(y).push({ x, str });
+  }
+  return [...rows.keys()].sort((a, b) => b - a).map((y) => rows.get(y).sort((a, b) => a.x - b.x).map((cell) => cell.str).join(" ").replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
+}
+var FULL_PAGE_CAP = 1e5;
+function normalizeSourceKind(item) {
+  const url = String(item?.url || "").toLowerCase();
+  if (/^(book:|mybooks:|mylib:|file:|internal:)/.test(url)) return "book";
+  if (/^https?:/.test(url)) return item?.kind === "book" ? "book" : "web";
+  return "web";
+}
+async function pageText(url, chars = FULL_PAGE_CAP, net2) {
   const r = await get(url, 12e3, net2);
   const type = r.headers.get("content-type") || "";
-  if (!/text\/html|text\/plain|xml/.test(type)) throw new Error("not a web page");
-  return strip((await r.text()).slice(0, 15e5)).slice(0, chars);
+  const cap = Math.max(FULL_PAGE_CAP, Math.min(Number(chars) || 0, FULL_PAGE_CAP));
+  if (/application\/pdf/i.test(type) || /\.pdf(?:$|[?#])/i.test(url)) {
+    const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const data = new Uint8Array(await r.arrayBuffer());
+    const pdf = await getDocument({ data, disableWorker: true, isEvalSupported: false }).promise;
+    let text = "";
+    for (let i = 1; i <= pdf.numPages && text.length < cap; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += (text ? "\n" : "") + pdfPageText(content.items);
+    }
+    return text.slice(0, cap);
+  }
+  if (!/text\/html|text\/plain|xml/i.test(type)) throw new Error("not a web page");
+  return strip((await r.text()).slice(0, 15e5)).slice(0, cap);
 }
-async function research(query, pageChars = 2500) {
+async function research(query, pageChars = 2500, context = {}) {
   const q = String(query || "").trim().slice(0, 300);
-  if (!q) throw new Error("Nothing to search for.");
+  const plan = planResearchQuery({
+    question: typeof context?.question === "string" && context.question.trim() ? context.question : query,
+    topic: typeof context?.topic === "string" ? context.topic : "",
+    subject: typeof context?.subject === "string" ? context.subject : "",
+    query
+  });
+  const searchText = plan.searchVariant || q;
+  if (!searchText) throw new Error("Nothing to search for.");
   const net2 = newNet();
-  const [w, p, label] = await Promise.allSettled([ddg(q, net2), europePmc(q, [], net2), openFdaByDrug(q, net2)]);
+  const subject = plan.subject;
+  const [w, p, label] = await Promise.allSettled([
+    ddg(searchText, net2),
+    europePmc(searchText, journalsFor(subject), net2),
+    openFdaByDrug(searchText, net2)
+  ]);
   const reachable = net2.ok > 0;
-  const web = (w.status === "fulfilled" ? w.value : []).sort((a, b) => Number(TRUSTED.test(b.url)) - Number(TRUSTED.test(a.url))).slice(0, 3);
+  const ranked = rankWebHits(w.status === "fulfilled" ? w.value : [], plan, (url) => TRUSTED.test(String(url || "")));
+  const web = ranked.slice(0, 5);
   const papers = p.status === "fulfilled" ? p.value : [];
   const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars, net2)));
-  const books = bookPassages(q, 6).map((b) => ({ ...b, kind: "book" }));
-  const labels = label.status === "fulfilled" ? label.value.map((x) => ({ ...x, kind: "label" })) : [];
+  const readPages = web.map((x, i) => {
+    const full = pages[i].status === "fulfilled" ? pages[i].value : "";
+    const text = full && full.length > 200 ? passageWindow(full, plan.terms, 2e4) : "";
+    return { ...x, full, text: text || x.snippet };
+  });
+  const books = bookPassages(searchText, 6, subject, 4e3).map((b) => ({ ...b, kind: "book" }));
+  const labels = (label.status === "fulfilled" ? label.value : []).filter((x) => labelFitsQuestion(x.title, plan.topic)).map((x) => ({ ...x, kind: "label" }));
   const sources = [
     ...labels,
     ...books,
-    ...web.map((x, i) => ({ title: x.title, url: x.url, text: (pages[i].status === "fulfilled" && pages[i].value.length > 200 ? pages[i].value : x.snippet) || x.snippet, kind: "web" })),
+    ...readPages.map((x) => ({ title: x.title, url: x.url, text: x.text, kind: "web" })),
     ...papers.map((x) => ({ ...x, kind: "europepmc" }))
-  ].filter((s) => s.text).map((s, i) => ({ n: i + 1, ...s }));
-  const search = !reachable ? "no-connection" : sources.some((s) => s.kind !== "book") ? "ok" : "no-results";
+  ].map((s) => ({ ...s, kind: normalizeSourceKind(s) })).filter((s) => s.text && (s.kind === "book" || isPublicUrl(s.url))).map((s, i) => ({ n: i + 1, ...s }));
+  const hasInternetSource = sources.some((s) => s.kind === "web" && isPublicUrl(s.url));
+  const search = !reachable ? "no-connection" : hasInternetSource ? "ok" : "no-results";
+  const evidenceTexts = [
+    ...readPages.map((x) => x.full),
+    ...papers.map((x) => x.text),
+    ...labels.map((x) => x.text)
+  ].filter(Boolean);
+  const coversQuestion = search === "ok" && evidenceTexts.length ? passagesCoverQuestion(evidenceTexts, plan.terms) : false;
   if (!sources.length) {
     return {
       sources: [],
       retrievedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
       search,
+      coversQuestion: false,
       detail: reachable ? "The search ran but matched nothing usable for these words." : "The search could not reach the internet (no connection, firewall or timeout)."
     };
   }
-  const detail = search === "no-connection" ? `The internet could not be reached, so no web source was checked. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : search === "no-results" ? `The internet was reached but matched nothing usable. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : "";
-  return { sources, retrievedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), search, detail };
+  const detail = search === "no-connection" ? `The internet could not be reached, so no web source was checked. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : search === "no-results" ? `The internet was reached but matched nothing usable. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : hasInternetSource && !coversQuestion ? "The internet was reached and pages were read, but none of the passages read so far states the detail asked for." : "";
+  return { sources, retrievedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), search, coversQuestion, detail };
 }
 var SUBJECT_JOURNALS = [
   [/physiolog/i, ["Indian J Physiol Pharmacol"]],
@@ -766,6 +980,8 @@ async function openFdaLabel(query) {
   if (!text) return [];
   return [{ title: `${name} (FDA drug label)`, url: "https://open.fda.gov/apis/drug/label/", text: text.slice(0, 1200) }];
 }
+var TOPICAL_FORM = /\b(cream|gel|ointment|cleanser|lotion|wash|shampoo|foam|patch|serum|spray|drops?)\b/i;
+var BROAD_CLASS = /^(antibiotic|antibacterial|antifungal|antiviral|antiseptic|steroid|corticosteroid|analgesic|pain|relief|acne|strength|triple|double|multi|all|purpose)\w*$/i;
 var NOT_A_DRUG = /* @__PURE__ */ new Set([
   "adverse",
   "effects",
@@ -813,14 +1029,62 @@ var NOT_A_DRUG = /* @__PURE__ */ new Set([
   "monthly",
   "daily",
   "weekly",
-  "regimen",
   "course",
   "prophylaxis",
   "prevention",
   "control",
   "programme",
-  "program"
+  "program",
+  // Qualifiers that describe the answer rather than name a drug. "maximum" in a dose question pulled
+  // "OXY MAXIMUM STRENGTH ACNE CREAM CLEANSER" in as the top label for a paracetamol question.
+  "maximum",
+  "minimum",
+  "strength",
+  "adult",
+  "adults",
+  "healthy",
+  "child",
+  "children",
+  "infant",
+  "neonate",
+  "recommended",
+  "exact",
+  "complete",
+  "current",
+  "recent",
+  "usual",
+  "single",
+  "total",
+  "initial",
+  "follow",
+  "oral",
+  "intravenous",
+  "intramuscular",
+  "topical",
+  "inhaled",
+  "route",
+  "frequency",
+  "interval",
+  "long",
+  "short",
+  "high",
+  "low",
+  "first",
+  "second",
+  "third",
+  "line",
+  "per",
+  "milligram",
+  "milligrams",
+  "gram",
+  "grams"
 ]);
+function labelFitsQuestion(title, topic) {
+  const name = String(title || "").toLowerCase();
+  const topicTerms = questionTerms(topic);
+  const specific = topicTerms.filter((term) => term.length >= 4 && !BROAD_CLASS.test(term));
+  return specific.some((term) => name.includes(term));
+}
 async function openFdaByDrug(query, net2) {
   const words2 = [...new Set(String(query || "").toLowerCase().match(/[a-z][a-z-]{4,}/g) || [])].filter((w) => !NOT_A_DRUG.has(w));
   for (const word of words2.slice(0, 6)) {
@@ -834,6 +1098,7 @@ async function openFdaByDrug(query, net2) {
     if (!hit) continue;
     const name = hit.openfda?.generic_name?.[0] || word;
     if (!new RegExp(`(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i").test(name)) continue;
+    if (TOPICAL_FORM.test(name) && BROAD_CLASS.test(word)) continue;
     const text = [hit.adverse_reactions?.[0], hit.warnings_and_cautions?.[0] || hit.warnings?.[0]].filter(Boolean).join(" ").replace(/\s+/g, " ");
     if (text) return [{ title: `${name} (FDA label: adverse reactions)`, url: "https://open.fda.gov/apis/drug/label/", text: text.slice(0, 2500) }];
   }
@@ -858,7 +1123,7 @@ function usesDrugLabels(subject) {
 }
 async function literatureSources(query, subject) {
   const drugSubject = usesDrugLabels(subject);
-  const book = bookPassages(query, 2, subject);
+  const book = bookPassages(query, 2, subject, 1800);
   const [label, subjectPapers] = await Promise.all([
     drugSubject ? openFdaLabel(query).catch(() => []) : Promise.resolve([]),
     europePmc(query, journalsFor(subject)).catch(() => [])
@@ -889,7 +1154,7 @@ var DATASET_DIRS = [
   path2.join(os2.homedir(), "Desktop", "pyq-dataset")
 ].filter(Boolean);
 var EXAM_LABEL = { INI_CET: "INI-CET", NEET_PG: "NEET" };
-var STOP2 = /* @__PURE__ */ new Set([
+var STOP3 = /* @__PURE__ */ new Set([
   "drugs",
   "drug",
   "classes",
@@ -968,7 +1233,7 @@ function namesOf(subtopic) {
   const names = /* @__PURE__ */ new Set();
   for (const raw of words2) {
     const w = raw.replace(/[^a-z-]/g, "").replace(/^-+|-+$/g, "");
-    if (w.length >= 5 && !STOP2.has(w)) names.add(w);
+    if (w.length >= 5 && !STOP3.has(w)) names.add(w);
   }
   return [...names];
 }
@@ -1035,7 +1300,7 @@ function myBooksSubject(label) {
   const hit = SUBJECT_MAP2.find(([re]) => re.test(s));
   return hit ? hit[1] : "";
 }
-var STOP3 = /* @__PURE__ */ new Set(["with", "from", "that", "this", "have", "were", "their", "which", "also", "after", "before", "than", "such", "only", "other", "most", "some", "used", "will", "does", "into", "when", "while", "there", "these", "those", "about", "among", "through", "where", "being", "given", "shows", "patient", "patients", "should", "could", "would", "they", "them", "been", "make", "makes"]);
+var STOP4 = /* @__PURE__ */ new Set(["with", "from", "that", "this", "have", "were", "their", "which", "also", "after", "before", "than", "such", "only", "other", "most", "some", "used", "will", "does", "into", "when", "while", "there", "these", "those", "about", "among", "through", "where", "being", "given", "shows", "patient", "patients", "should", "could", "would", "they", "them", "been", "make", "makes"]);
 var DISPUTE = /\b(books? differ|sources? differ|differs? (?:between|by|from book)|disagree|disputed|controvers|conflicting|varies (?:between|by)|not agreed)\w*/i;
 function myBooksStatus() {
   const database = open();
@@ -1046,7 +1311,7 @@ function myBooksStatus() {
 function searchMyBooks(query, subject = "", limit = 4, excerptChars = 1800) {
   const database = open();
   if (!database) return [];
-  const terms = [...new Set(String(query || "").toLowerCase().match(/[a-z][a-z-]{2,}/g) || [])].filter((t) => !STOP3.has(t)).slice(0, 12);
+  const terms = [...new Set(String(query || "").toLowerCase().match(/[a-z][a-z-]{2,}/g) || [])].filter((t) => !STOP4.has(t)).slice(0, 12);
   if (!terms.length) return [];
   const bookSubject = myBooksSubject(subject);
   const select = (withSubject, op) => `SELECT s.subject AS subject, s.chapter_no AS chapter_no, s.chapter_title AS chapter_title, s.heading AS heading,
@@ -5010,14 +5275,25 @@ app.post("/api/qa/refine-batch", async (req, res) => {
 });
 app.post("/api/web/research", async (req, res) => {
   const query = typeof req.body?.query === "string" ? req.body.query : "";
+  const question = typeof req.body?.question === "string" ? req.body.question.slice(0, 1200) : "";
+  const topic = typeof req.body?.topic === "string" ? req.body.topic.slice(0, 300) : "";
+  const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 120) : "";
   try {
     const pageChars = Math.min(3e4, Math.max(2500, Number(req.body?.pageChars) || 2500));
     if (req.body?.books) {
-      const found = searchMyBooks(query, typeof req.body?.subject === "string" ? req.body.subject : "", 6, Math.min(pageChars, 2500));
-      return res.json({ success: true, search: found.length ? "local" : "empty", sources: found.map((f) => ({ title: `${f.title} \u2014 ${f.heading}`, url: `mybooks:${f.title}`, text: f.text, kind: "book" })), retrievedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const terms = questionTerms(question || query);
+      const wanted = Math.min(12e3, Math.max(pageChars, 6e3));
+      const found = searchMyBooks(question || query, subject, 6, wanted);
+      const sources = found.map((f) => ({
+        title: `${f.title} \u2014 ${f.heading}`,
+        url: `mybooks:${f.title}`,
+        text: f.text.length > 6e3 ? passageWindow(f.text, terms, 6e3) : f.text,
+        kind: "book"
+      }));
+      return res.json({ success: true, search: sources.length ? "local" : "empty", sources, retrievedAt: (/* @__PURE__ */ new Date()).toISOString() });
     }
-    const out = await research(query, pageChars);
-    return res.json({ success: true, search: out.search ?? "ok", searchDetail: out.detail || "", sources: out.sources, retrievedAt: out.retrievedAt });
+    const out = await research(query, pageChars, { question, topic, subject });
+    return res.json({ success: true, search: out.search ?? "ok", searchDetail: out.detail || "", coversQuestion: out.coversQuestion === true, sources: out.sources, retrievedAt: out.retrievedAt });
   } catch (err) {
     return res.status(502).json({ success: false, search: "unavailable", searchDetail: err?.message || "Web research failed." });
   }

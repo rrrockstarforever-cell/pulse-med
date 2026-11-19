@@ -13,21 +13,48 @@ import {
   planQuestionIds,
   saveStudyPlan,
   setPlanPartDone,
+  splitRecall,
+  type CoveredQuestion,
   type Miss,
   type PlanProgress,
   type StudyPlan,
 } from '../lib/studyPlan.ts';
+import { researchForPlan } from '../lib/planResearch.ts';
 import { getModule } from '../utils/moduleStore.ts';
 import { loadRunSession } from '../utils/sessionStore.ts';
 import { listCapturedQuestions } from '../utils/mistakeStore.ts';
 import { renderKeyPoints } from './KeyText.tsx';
 import { GroundedChat } from './GroundedChat.tsx';
 
-export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate: (view: AppView) => void }> = ({ bankId, title, onNavigate }) => {
+type PlanSourceMode = 'both' | 'books' | 'web';
+
+const PLAN_SOURCE_MODES: Array<{ value: PlanSourceMode; label: string }> = [
+  { value: 'both', label: 'Books + Internet' },
+  { value: 'books', label: 'My books' },
+  { value: 'web', label: 'Internet' },
+];
+
+const normalizePlanSourceMode = (value: unknown): PlanSourceMode =>
+  value === 'books' || value === 'web' ? value : 'both';
+
+type CoveredQuestionView = CoveredQuestion & { questionNumber?: string | number; questionText?: string };
+
+const safeHttpHref = (value: string): string | null => {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
+export const StudyPlanPage: React.FC<{ bankId: string; title: string; subject?: string; onNavigate: (view: AppView) => void }> = ({ bankId, title, subject, onNavigate }) => {
   const [misses, setMisses] = useState<Miss[] | null>(null);
   const [savedQuestions, setSavedQuestions] = useState<ClinicalQuestion[] | null>(null);
   const [plan, setPlan] = useState<StudyPlan | null>(() => loadStudyPlan(bankId));
   const [done, setDone] = useState<Record<string, boolean>>(() => loadPlanDone(bankId));
+  const [planSourceMode, setPlanSourceMode] = useState<PlanSourceMode>(() => normalizePlanSourceMode(plan?.sourceMode));
+  const [revealedRecall, setRevealedRecall] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [buildProgress, setBuildProgress] = useState<PlanProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +75,11 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
   }, []);
 
   useEffect(() => {
-    setPlan(loadStudyPlan(bankId));
+    const loaded = loadStudyPlan(bankId);
+    setPlan(loaded);
     setDone(loadPlanDone(bankId));
+    setPlanSourceMode(normalizePlanSourceMode(loaded?.sourceMode));
+    setRevealedRecall({});
   }, [bankId]);
 
   useEffect(() => {
@@ -101,6 +131,7 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
       setError(`No AI provider is active. ${NOT_CONNECTED_MESSAGE}`);
       return;
     }
+    const sourceMode = normalizePlanSourceMode(planSourceMode);
     stopRef.current = false;
     setBusy(true);
     setError(null);
@@ -113,11 +144,16 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
         model: getEffectiveModel(provider),
         onProgress: setBuildProgress,
         shouldStop: () => stopRef.current,
+        sourceMode,
+        research: researchForPlan(sourceMode),
       });
       if (stopRef.current) return;
       if (!result.chunks.length) throw new Error('The AI gave no usable plan. Nothing was saved. Try again.');
-      saveStudyPlan(result);
-      setPlan(result);
+      const planWithSourceMode: StudyPlan = { ...result, sourceMode };
+      saveStudyPlan(planWithSourceMode);
+      setPlan(planWithSourceMode);
+      setPlanSourceMode(sourceMode);
+      setRevealedRecall({});
       setDone(loadPlanDone(bankId));
     } catch (err: any) {
       setError(err?.message || 'Could not build the study plan.');
@@ -146,8 +182,8 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
     void runBuild(pre);
   };
 
-  const toggleDone = (partTitle: string) => {
-    const next = setPlanPartDone(bankId, partTitle, !isPartDone(done, partTitle));
+  const toggleDone = (chunkId: string) => {
+    const next = setPlanPartDone(bankId, chunkId, !isPartDone(done, chunkId));
     setDone(next);
   };
 
@@ -156,9 +192,12 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
   const skippedCount = misses?.filter((m) => m.reason === 'skipped').length ?? 0;
   const preReadCount = misses?.filter((m) => m.reason === 'preread').length ?? 0;
   const plannedIds = plan ? planQuestionIds(plan) : null;
+  const plannedQuestionCount = plannedIds?.size ?? 0;
   const newCount = plan && misses && plannedIds ? misses.filter((m) => m.reason !== 'preread' && !plannedIds.has(m.id)).length : 0;
   const threadId = topic ? `${bankId}::${topic}` : bankId;
   const chatTitle = topic ? `${topic} (${title})` : title;
+  // The bank's own questions carry the subject, so the search can use it without the caller passing it.
+  const planSubject = subject || savedQuestions?.[0]?.subject || '';
   const topicPicker = plan && plan.chunks.length ? (
     <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
       <span className="shrink-0">Chat about</span>
@@ -174,8 +213,8 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
   ) : null;
 
   const totalParts = plan?.chunks.length ?? 0;
-  const doneCount = plan ? plan.chunks.filter((c) => isPartDone(done, c.title)).length : 0;
-  const minutesLeft = plan ? plan.chunks.reduce((sum, c) => sum + (isPartDone(done, c.title) ? 0 : chunkMinutes(c)), 0) : 0;
+  const doneCount = plan ? plan.chunks.filter((c) => isPartDone(done, c.chunkId)).length : 0;
+  const minutesLeft = plan ? plan.chunks.reduce((sum, c) => sum + (isPartDone(done, c.chunkId) ? 0 : chunkMinutes(c)), 0) : 0;
   const donePercent = totalParts > 0 ? Math.round((doneCount / totalParts) * 100) : 0;
 
   return (
@@ -209,6 +248,34 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1 space-y-4">
+          <div className="max-w-3xl rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Source mode</div>
+            <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Study plan source mode">
+              {PLAN_SOURCE_MODES.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`inline-flex min-h-[40px] cursor-pointer items-center rounded-xl border px-3 text-[12.5px] font-semibold shadow-sm focus-within:ring-2 focus-within:ring-[#0f8b8d] ${
+                    planSourceMode === opt.value
+                      ? 'border-[#0f8b8d] bg-teal-50 text-[#00696b] dark:border-teal-500/60 dark:bg-teal-950/40 dark:text-teal-200'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="plan-source-mode"
+                    value={opt.value}
+                    checked={planSourceMode === opt.value}
+                    disabled={busy}
+                    onChange={() => setPlanSourceMode(opt.value)}
+                    className="sr-only"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1 text-[11.5px] text-slate-500 dark:text-slate-400">Applies only to building this study plan. Chat has its own source controls.</p>
+          </div>
+
           {error && (
             <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800 dark:border-rose-400/50 dark:bg-rose-950/50 dark:text-rose-100">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span>
@@ -230,7 +297,9 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                 <span className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-700 dark:text-teal-300"><BookOpen className="h-4 w-4" /> {preReadCount} pre-read</span>
               )}
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                The plan covers these {misses.length} question{misses.length === 1 ? '' : 's'}.
+                {plan && plannedIds
+                  ? `This saved plan covers ${plannedQuestionCount} question${plannedQuestionCount === 1 ? '' : 's'}.`
+                  : `The plan covers these ${misses.length} question${misses.length === 1 ? '' : 's'}.`}
               </span>
             </div>
           )}
@@ -287,11 +356,12 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
             <>
               <div className="max-w-3xl rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
                 <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  {doneCount} of {totalParts} part{totalParts === 1 ? '' : 's'} done · about {minutesLeft} min left
+                  {doneCount} of {totalParts} read · about {minutesLeft} min left
                 </div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                   <div className="h-full rounded-full bg-[#0f8b8d] transition-all" style={{ width: `${donePercent}%` }} />
                 </div>
+                <p className="mt-1 text-[11.5px] text-slate-500 dark:text-slate-400">Retesting is not measured here; this checklist only tracks reading.</p>
               </div>
 
               <article className="max-w-3xl space-y-6">
@@ -318,10 +388,12 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                 </div>
 
                 {plan.chunks.map((c, i) => {
-                  const partDone = isPartDone(done, c.title);
+                  const partDone = isPartDone(done, c.chunkId);
+                  const coveredQuestions: CoveredQuestionView[] = c.coveredQuestions ?? [];
+                  const evidenceNote = c.evidenceNote ?? '';
                   const partContext = [c.intro, c.sections.map((s) => s.heading).join('; ')].filter(Boolean).join('\n');
                   return (
-                    <section key={i} id={`plan-part-${i + 1}`} className={`scroll-mt-4 space-y-3 ${partDone ? 'opacity-75' : ''}`}>
+                    <section key={c.chunkId || i} id={`plan-part-${i + 1}`} className={`scroll-mt-4 space-y-3 ${partDone ? 'opacity-75' : ''}`}>
                       {i > 0 && c.connects && (
                         <div className="flex items-start gap-2 rounded-xl bg-slate-100 px-3 py-2 text-[12.5px] italic text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                           <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />{c.connects}
@@ -332,13 +404,14 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                         <h3 className="flex min-w-0 items-center gap-2 text-[17px] font-semibold text-slate-900 dark:text-white">
                           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#0f8b8d] text-[13px] text-white">{i + 1}</span>
                           <span className="min-w-0">{c.title}</span>
-                          {partDone && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="Done" />}
+                          {partDone && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="Read" />}
                         </h3>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-medium text-slate-500 dark:text-slate-400">~{chunkMinutes(c)} min</span>
                           <button
                             type="button"
-                            onClick={() => toggleDone(c.title)}
+                            onClick={() => toggleDone(c.chunkId)}
+                            aria-pressed={partDone}
                             className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border px-3 text-[12.5px] font-semibold shadow-sm ${
                               partDone
                                 ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/40'
@@ -346,7 +419,7 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                             }`}
                           >
                             {partDone ? <CheckCircle2 className="h-4 w-4" /> : null}
-                            {partDone ? 'Mark not done' : 'Mark done'}
+                            {partDone ? 'Mark unread' : 'Mark read'}
                           </button>
                           <button
                             type="button"
@@ -364,6 +437,7 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                         </div>
                       )}
                       {c.why && <p className="text-[12.5px] text-slate-500 dark:text-slate-400">Why this part: {c.why}</p>}
+                      {evidenceNote && <p className="text-[12px] text-slate-500 dark:text-slate-400">{evidenceNote}</p>}
                       {c.intro && <p className="text-[14px] leading-relaxed text-slate-800 dark:text-slate-100">{renderKeyPoints(c.intro, `i${i}`)}</p>}
 
                       {c.sections.map((s, k) => (
@@ -398,20 +472,95 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                         <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-800/50 dark:bg-amber-950/30">
                           <div className="mb-1 text-[13px] font-semibold text-amber-900 dark:text-amber-200">Check yourself</div>
                           <ul className="space-y-1.5 text-[13.5px] text-amber-950 dark:text-amber-100">
-                            {c.recall.map((t, j) => (
-                              <li key={j} className="flex flex-wrap items-start justify-between gap-2">
-                                <span className="min-w-0 flex-1">{t}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => ask(`Quiz me on this, one question at a time: ${t}`)}
-                                  className="inline-flex min-h-[40px] shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white/70 px-2 text-[12px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
-                                >
-                                  <Sparkles className="h-3.5 w-3.5" /> Quiz me
-                                </button>
-                              </li>
-                            ))}
+                            {c.recall.map((t, j) => {
+                              const { question, answer } = splitRecall(t);
+                              const revealKey = `${c.chunkId}:${j}`;
+                              const answerId = `recall-answer-${i}-${j}`;
+                              const revealed = Boolean(revealedRecall[revealKey]);
+                              return (
+                                <li key={j} className="space-y-1.5">
+                                  <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <span className="min-w-0 flex-1">{question}</span>
+                                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        aria-expanded={revealed}
+                                        aria-controls={answerId}
+                                        onClick={() => setRevealedRecall((prev) => ({ ...prev, [revealKey]: !prev[revealKey] }))}
+                                        className="inline-flex min-h-[40px] shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white/70 px-2 text-[12px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
+                                      >
+                                        {revealed ? 'Hide answer' : 'Reveal answer'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => ask(`Quiz me on this, one question at a time: ${question}`, undefined, c.title)}
+                                        className="inline-flex min-h-[40px] shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white/70 px-2 text-[12px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
+                                      >
+                                        <Sparkles className="h-3.5 w-3.5" /> Quiz me
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div id={answerId} hidden={!revealed} className="rounded-lg bg-white/70 px-2 py-1 text-[13px] text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
+                                    {answer || 'No answer was written for this line.'}
+                                  </div>
+                                </li>
+                              );
+                            })}
                           </ul>
                         </div>
+                      )}
+
+                      {c.sources && c.sources.length > 0 && (
+                        <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[12.5px] dark:border-slate-700 dark:bg-slate-800/40">
+                          <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Sources ({c.sources.length})</summary>
+                          <ul className="mt-2 space-y-2 text-slate-600 dark:text-slate-300">
+                            {c.sources.map((s, si) => {
+                              const href = s.kind === 'web' ? safeHttpHref(s.url) : null;
+                              return (
+                                <li key={`${s.n}-${si}`} className="space-y-0.5">
+                                  <div className="flex flex-wrap items-baseline gap-2">
+                                    <span className="font-mono text-[11px]">[{s.n}]</span>
+                                    {href ? (
+                                      <a href={href} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#00696b] underline-offset-2 hover:underline dark:text-teal-300">
+                                        {s.title || href}
+                                      </a>
+                                    ) : (
+                                      <span className="font-semibold">{s.title || (s.kind === 'book' ? 'Book source' : 'Source')}</span>
+                                    )}
+                                  </div>
+                                  {s.text && <p className="text-[12px] leading-relaxed">{s.text}</p>}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </details>
+                      )}
+
+                      {coveredQuestions.length > 0 && (
+                        <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[12.5px] dark:border-slate-700 dark:bg-slate-800/40">
+                          <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Covered questions ({coveredQuestions.length})</summary>
+                          <ul className="mt-2 space-y-1.5 text-slate-600 dark:text-slate-300">
+                            {coveredQuestions.map((q, j) => {
+                              const chosen = [q.chosenLetter, q.chosenText].filter(Boolean).join(' — ') || '—';
+                              const correct = [q.correctLetter, q.correctText].filter(Boolean).join(' — ') || '—';
+                              const reason = q.missReason && q.reason ? `${q.missReason}: ${q.reason}` : q.missReason || q.reason || '';
+                              return (
+                                <li key={`${q.id || 'q'}-${j}`} className="space-y-0.5">
+                                  <div className="flex flex-wrap items-baseline gap-x-2">
+                                    <span className="font-mono text-[11px]">{q.id || `question-${j + 1}`}</span>
+                                    {q.questionNumber ? <span className="text-[11px] font-semibold">Q{q.questionNumber}</span> : null}
+                                    <span className="min-w-0 flex-1">{q.questionText || 'Question text not recorded'}</span>
+                                  </div>
+                                  <div>
+                                    <span>Selected: {chosen}</span>
+                                    <span> · Correct: {correct}</span>
+                                    {reason ? <span> · Reason: {reason}</span> : null}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </details>
                       )}
                     </section>
                   );
@@ -419,6 +568,11 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
 
                 <p className="text-[11.5px] text-slate-500 dark:text-slate-400">
                   Written by AI from your wrong and flagged questions on {new Date(plan.at).toLocaleString()}. Check important details against your textbook.
+                  {plan.sourceModeUnrecorded || plan.chunks.some((chunk) => chunk.sourceModeUnrecorded)
+                    ? ' · source mode: unrecorded · evidence: not run'
+                    : plan.sourceMode !== 'both'
+                      ? ` · source mode: ${plan.sourceMode}`
+                      : ''}
                 </p>
               </article>
             </>
@@ -429,7 +583,7 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
           <div className="hidden lg:block lg:w-[400px] lg:shrink-0 lg:self-stretch">
             <div className="flex flex-col gap-2 lg:sticky lg:top-4 lg:h-[calc(100dvh-7rem)]">
               {topicPicker}
-              <div className="min-h-0 flex-1"><GroundedChat key={threadId} bankId={threadId} title={chatTitle} seed={seed} /></div>
+              <div className="min-h-0 flex-1"><GroundedChat key={threadId} bankId={threadId} title={chatTitle} subject={planSubject} seed={seed} /></div>
             </div>
           </div>
         )}
@@ -455,6 +609,7 @@ export const StudyPlanPage: React.FC<{ bankId: string; title: string; onNavigate
                 key={threadId}
                 bankId={threadId}
                 title={chatTitle}
+                subject={planSubject}
                 seed={seed}
                 onClose={() => {
                   setMobileChatOpen(false);
