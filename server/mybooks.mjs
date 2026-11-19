@@ -74,20 +74,28 @@ export function searchMyBooks(query, subject = '', limit = 4, excerptChars = 180
   // Every word first; if nothing matches, any of the words.
   const attempts = [terms.map((t) => `"${t}"`).join(' AND ')];
   if (terms.length > 1) attempts.push(terms.map((t) => `"${t}"`).join(' OR '));
-  const run = (op, value) => {
+  const run = (op, value, n = limit) => {
     for (const match of attempts) {
       try {
-        const found = database.prepare(select(true, op)).all(match, value, limit);
+        const found = database.prepare(select(true, op)).all(match, value, n);
         if (found.length) return found;
       } catch { /* a bad search phrase finds nothing */ }
     }
     return [];
   };
-  // The learner's subject is read first. Only when it gives fewer passages than asked for are the other books read.
+  // The learner's subject gets about half the places; the best passages from every other book get the rest. Reading the
+  // subject alone hid the book that holds the answer (a leprosy question asked under Dermatology never reached the PSM
+  // chapter with the national regimen). When one side has too few passages the other side fills its places.
   let rows = [];
-  if (bookSubject) {
+  if (bookSubject && limit < 5) {
+    // Small lookups keep the old order: the subject first, the other books only to fill the places.
     rows = run('=', bookSubject);
     if (rows.length < limit) rows = [...rows, ...run('!=', bookSubject).slice(0, limit - rows.length)];
+  } else if (bookSubject) {
+    const own = run('=', bookSubject, limit);
+    const other = run('!=', bookSubject, limit);
+    const nOwn = Math.min(own.length, Math.max(limit - other.length, Math.ceil(limit / 2)));
+    rows = [...own.slice(0, nOwn), ...other.slice(0, limit - nOwn)];
   } else {
     rows = run('!=', '');
   }

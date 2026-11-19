@@ -122,6 +122,47 @@ const MAX_SOURCE_TEXT = 100_000;
 // A search string still has a sane bound, but the student's own words are not cut away to make it:
 // the whole question is sent separately and the server builds its own short variant from it.
 const MAX_SEARCH_QUERY = 400;
+// How many numbered sources of each kind reach the model, and how much of one web page. The old rule kept the first
+// four of each kind in the order the server listed them, so an official page listed fifth was dropped while a
+// 226-character stub listed second was kept.
+const MAX_BOOK_SOURCES = 6;
+const MAX_WEB_SOURCES = 8;
+const MAX_WEB_TEXT = 8000;
+const OFFICIAL_HOST_RE =
+  /(who\.int|mohfw\.gov\.in|nhp\.gov\.in|dghs\.|icmr\.|cdc\.gov|nice\.org\.uk|nih\.gov|ncbi\.nlm|europepmc|doi\.org|cochrane|statpearls|msdmanuals|natboard|aiims|\.gov(\.|\/|$)|\.edu(\.|\/|$))/i;
+const THIN_HOST_RE = /(scribd\.|quora\.|reddit\.|facebook\.|pinterest\.|slideshare\.|studocu\.|coursehero\.)/i;
+const RANK_STOP = new Set(['what', 'which', 'when', 'where', 'does', 'with', 'from', 'that', 'this', 'have', 'about', 'give', 'explain', 'between', 'difference', 'treatment', 'following', 'regimen']);
+
+/** Orders raw sources so the pages most likely to state the asked fact come first. Stable for equal scores. */
+export function rankRawSources(raw: RawSource[], question: string): RawSource[] {
+  const terms = Array.from(new Set((question.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []).filter((t) => !RANK_STOP.has(t))));
+  const seen = new Set<string>();
+  const scored: { item: RawSource; score: number; at: number }[] = [];
+  raw.forEach((item, at) => {
+    const url = String(item.url ?? '').trim();
+    const key = url.replace(/[#?].*$/, '').toLowerCase();
+    if (key && seen.has(key)) return;
+    if (key) seen.add(key);
+    const text = String(item.text ?? '');
+    const lower = text.toLowerCase();
+    const covered = terms.length ? terms.filter((t) => lower.includes(t)).length / terms.length : 0;
+    let score = covered * 4;
+    if (OFFICIAL_HOST_RE.test(url)) score += 2;
+    if (THIN_HOST_RE.test(url)) score -= 2;
+    if (text.length >= 1500) score += 1;
+    if (text.length < 400) score -= 5;
+    scored.push({ item, score, at });
+  });
+  return scored.sort((a, b) => b.score - a.score || a.at - b.at).map((s) => s.item);
+}
+
+function sourceDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
 
 export function normalizeSourceKind(
   item: { kind?: string; url?: string },
@@ -227,10 +268,14 @@ export function buildSystemPrompt(opts: {
     'The app runs a source search for every question before you answer, and it reports the real outcome below. You have no search tool of your own: what the app found is all there is.',
     'Never say you searched, browsed or "checked the internet" unless the report says a search ran. Never say you cannot search either — say what the report says happened. If no search could run, still give a short, useful answer from your own knowledge, clearly labelled as such.',
     'Use ONLY the numbered sources for every factual claim, and cite them like [1] or [2] right after the claim.',
+    'Book passages are the student\'s own textbook notes; Web passages are internet pages. Build the answer on the Book passages first, in the book\'s wording and order, so the answer reads like the student\'s own book.',
+    'Use Web passages only to fill points the Book passages do not state, and mark each web-added point, for example "From the internet:" with its source number.',
+    'If a Web source and the Book disagree (for example the book gives an older regimen and a current WHO or national guideline gives another), do not silently pick one: show the Book\'s version, show the Web version, say which is more recent or official, and say which one to use for the exam in India if the sources say so.',
+    'If the Book passages have nothing on the question, answer from the Web passages and say the book did not cover it.',
     'If the numbered sources do not contain the answer, say "The search did not return a direct source for this." in your first sentence, then give at most a short answer clearly labelled "From general knowledge (not verified):".',
     'Never invent numbers, doses, criteria, or page numbers.',
     'If sources disagree, say so.',
-    'For drug regimens, doses, and durations, a current official guideline page (WHO, CDC, NLEP, MoHFW, DGHS, ICMR) wins over an older book passage. Say which source you followed. A drug missing from a short book excerpt is not evidence that the drug is left out. Do not invent a dose the sources do not state.',
+    'For drug regimens, doses, and durations, a current official guideline page (WHO, CDC, NLEP, MoHFW, DGHS, ICMR) is the more recent reference when it differs from an older book passage: show both, name the conflict, and say which is current. A drug missing from a short book excerpt is not evidence that the drug is left out. Do not invent a dose the sources do not state.',
     'Use simple words.',
     'Start with the direct answer in plain words, in ONE bold line like "**Answer: ...**". Then add only what the question needs: a short paragraph for a single fact, "- " bullets for several separate points, a markdown table only when the question asks to compare things, numbered steps only for a procedure, and a ```flow fenced block (one step per line, a branch written "condition -> next step", a decision written "? question") only when the path really branches. A one-fact answer should be one to three sentences and needs no headings.',
     'Keep it as short as it can be while answering every part of the question; go past about 220 words only if the student asks for a full note. A one-line pearl written as "> Pearl: ..." is welcome when there is a real exam point to remember; skip it otherwise. Do not use any other markdown (no images, no HTML).',
@@ -240,6 +285,7 @@ export function buildSystemPrompt(opts: {
     'Every causal "because …" clause, every dose, every age threshold and every universal claim ("all", "never", "always") needs support from a numbered source. If no source supports it, write "not stated in the sources" and stop.',
     'If the student\'s question is a beginner question ("in simple language", "for a first-year"), start with the plain mechanism and hold back advanced exceptions; do not open with a false either-or.',
     'For a genuine side-by-side comparison use a markdown table; otherwise do not use a table.',
+    'A web page table is shown with one row per line and cells joined by " | ". Header rows may have fewer cells than data rows, and a merged cell such as a duration may appear only on the first row of a block, so it applies to every row below it in that block. A drug, dose or step listed in a table without a "not used" mark applies to every group column of that block: give it for each group, and say only what differs, such as the duration. Never drop a drug from one group unless the source clearly says it is not used there.',
     `Source search result: ${searchReport}${searchBlocker}`,
   ].join(' ');
 }
@@ -368,10 +414,11 @@ export function normalizeSources(
   kind: 'book' | 'web',
   startAt: number,
   question = '',
+  max = 4,
 ): Source[] {
   const out: Source[] = [];
   for (const item of raw) {
-    if (out.length >= 4) break;
+    if (out.length >= max) break;
     const url = (item.url ?? '').trim();
     const sourceKind = normalizeSourceKind(item, kind);
     if (sourceKind === 'web' && !isSafeWebUrl(url)) continue;
@@ -379,9 +426,11 @@ export function normalizeSources(
     const title =
       (item.title ?? '').trim() || (sourceKind === 'book' ? 'Book source' : 'Web source');
     const fullText = (item.text ?? '').trim();
-    const truncated = fullText.length > MAX_SOURCE_TEXT;
+    // A web page is cut to a window around the asked words; a book passage is already one section.
+    const limit = sourceKind === 'web' ? MAX_WEB_TEXT : MAX_SOURCE_TEXT;
+    const truncated = fullText.length > limit;
     const text = truncated
-      ? `${questionWindow(fullText, question, MAX_SOURCE_TEXT - 40)}\n…[text truncated]`
+      ? `${questionWindow(fullText, question, limit - 40)}\n…[text truncated]`
       : fullText;
     out.push({
       n: startAt + out.length,
@@ -415,7 +464,10 @@ function formatHistory(history: ChatTurn[]): string {
 function formatSources(sources: Source[]): string {
   if (!sources.length) return 'None found.';
   return sources
-    .map((source) => `[${source.n}] (${source.kind === 'book' ? 'Book' : 'Web'}) ${source.title}\n${source.text}`)
+    .map((source) => {
+      const where = source.kind === 'book' ? 'Book' : `Web, ${sourceDomain(source.url) || 'unknown site'}`;
+      return `[${source.n}] (${where}) ${source.title}\n${source.text}`;
+    })
     .join('\n\n');
 }
 
@@ -475,8 +527,9 @@ export async function askGrounded(opts: {
 
   if (signal?.aborted) return errorTurn('Stopped.', mode);
 
-  const bookSources = normalizeSources(rawBooks, 'book', 1, question);
-  const webSources = normalizeSources(rawWeb, 'web', bookSources.length + 1, question);
+  const rankQuestion = resolved.effectiveQuestion || question;
+  const bookSources = normalizeSources(rawBooks, 'book', 1, rankQuestion, MAX_BOOK_SOURCES);
+  const webSources = normalizeSources(rankRawSources(rawWeb, rankQuestion), 'web', bookSources.length + 1, rankQuestion, MAX_WEB_SOURCES);
   const sources = [...bookSources, ...webSources];
 
   const outcome = decideGroundedOutcome(mode, webSearch, bookSources.length, webSources.length, coversQuestion);

@@ -1,0 +1,60 @@
+# Nemotron Orchestration — sample configuration
+
+Copy this file to `nemotron.config.local.json` (or set the equivalent environment
+variables) and fill in your real NVIDIA NIM API key and model IDs.
+
+All credentials come from environment variables — never hardcode them.
+
+{
+  "NEMOTRON_API_KEY": "nvapi-<your-nvidia-api-key>",
+  "NEMOTRON_ENDPOINT": "https://integrate.api.nvidia.com/v1",
+
+  # Chief orchestrator — Nemotron 3.5 Super VL 120B-A12B (must remain the primary model)
+  "NEMOTRON_SUPER_MODEL": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "NEMOTRON_SUPER_ENABLED": "true",
+  "NEMOTRON_SUPER_CONTEXT_WINDOW": "131072",
+  "NEMOTRON_SUPER_MAX_OUTPUT": "8192",
+  "NEMOTRON_SUPER_TEMPERATURE": "0.2",
+  "NEMOTRON_SUPER_TIMEOUT_MS": "120000",
+  "NEMOTRON_SUPER_RETRY_LIMIT": "3",
+  "NEMOTRON_SUPER_CONCURRENCY": "1",
+
+  # Specialist: Nemotron Nano 3 30B-A3B — text reasoning (not the omni model)
+  "NEMOTRON_NANO_MODEL": "nvidia/nemotron-nano-3-30b-a3b",
+  "NEMOTRON_NANO_ENABLED": "true",
+  "NEMOTRON_NANO_CONTEXT_WINDOW": "131072",
+  "NEMOTRON_NANO_MAX_OUTPUT": "4096",
+  "NEMOTRON_NANO_TEMPERATURE": "0.7",
+  "NEMOTRON_NANO_CONCURRENCY": "5",
+
+  # Specialist: Nemotron 3.5 Lightning 30B-A3B — high throughput
+  "NEMOTRON_LIGHTNING_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b",
+  "NEMOTRON_LIGHTNING_ENABLED": "true",
+  "NEMOTRON_LIGHTNING_CONTEXT_WINDOW": "131072",
+  "NEMOTRON_LIGHTNING_MAX_OUTPUT": "4096",
+  "NEMOTRON_LIGHTNING_TEMPERATURE": "0.5",
+  "NEMOTRON_LIGHTNING_CONCURRENCY": "10",
+
+  # Specialist: Nemotron 3.5 Bolt E4B — lightweight autonomous
+  "NEMOTRON_BOLT_MODEL": "nvidia/nemotron-3.5-bolt-e4b",
+  "NEMOTRON_BOLT_ENABLED": "true",
+  "NEMOTRON_BOLT_CONTEXT_WINDOW": "131072",
+  "NEMOTRON_BOLT_MAX_OUTPUT": "2048",
+  "NEMOTRON_BOLT_TEMPERATURE": "0.5",
+  "NEMOTRON_BOLT_CONCURRENCY": "8",
+
+  # Specialist: Nemotron 3 Ultra 550B-A55B — advanced reasoning / escalation (optional)
+  "NEMOTRON_ULTRA_MODEL": "nvidia/nemotron-3-ultra-550b-a55b",
+  "NEMOTRON_ULTRA_ENABLED": "true",
+  "NEMOTRON_ULTRA_CONTEXT_WINDOW": "131072",
+  "NEMOTRON_ULTRA_MAX_OUTPUT": "8192",
+  "NEMOTRON_ULTRA_TEMPERATURE": "0.2",
+  "NEMOTRON_ULTRA_TIMEOUT_MS": "300000",
+  "NEMOTRON_ULTRA_RETRY_LIMIT": "2",
+  "NEMOTRON_ULTRA_CONCURRENCY": "1",
+
+  # Orchestration level
+  "NEMOTRON_DEFAULT_TIMEOUT_MS": "60000",
+  "NEMOTRON_MAX_EXECUTION_MS": "600000",
+  "NEMOTRON_ENABLE_EXECUTION_LOG": "true",
+}

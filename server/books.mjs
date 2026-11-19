@@ -54,17 +54,35 @@ export function searchLibrary(query, subject = '', limit = 2, excerptChars = 700
   const terms = [...new Set(String(query || '').toLowerCase().match(/[a-z][a-z-]{3,}/g) || [])].filter((t) => !STOP.has(t));
   if (!terms.length) return [];
   const subjects = librarySubjects(subject);
-  const subjectSql = subjects.length ? ` AND b.subject IN (${subjects.map(() => '?').join(',')})` : '';
-  const select = `SELECT b.id AS book_id, b.title AS title, p.page_no AS page_no, p.text AS text, bm25(pages_fts) AS rank
+  const marks = subjects.map(() => '?').join(',');
+  const selectFor = (subjectSql) => `SELECT b.id AS book_id, b.title AS title, p.page_no AS page_no, p.text AS text, bm25(pages_fts) AS rank
     FROM pages_fts JOIN pages p ON p.id = pages_fts.rowid JOIN books b ON b.id = p.book_id
     WHERE pages_fts MATCH ?${subjectSql} ORDER BY rank LIMIT ?`;
   // Every word must appear on the page first; if nothing matches, any of the words may.
   const attempts = [terms.map((t) => `"${t}"`).join(' AND ')];
   if (terms.length > 1) attempts.push(terms.map((t) => `"${t}"`).join(' OR '));
-  let rows = [];
-  for (const match of attempts) {
-    rows = database.prepare(select).all(match, ...subjects, limit);
-    if (rows.length) break;
+  const runWith = (sql, args, n) => {
+    for (const match of attempts) {
+      const found = database.prepare(selectFor(sql)).all(match, ...args, n);
+      if (found.length) return found;
+    }
+    return [];
+  };
+  // The subject's books get about half the places and the best pages of every other book get the rest. Searching the
+  // subject alone hid the book that holds the answer (a leprosy question under Dermatology never reached Park's
+  // national-programme pages). When one side has too few pages the other side fills its places.
+  // Small lookups (question-writing evidence asks for 2 pages) keep the old subject-only reading; the mix is for the
+  // chat and plan research, which ask for 5 or more.
+  let rows;
+  if (subjects.length && limit < 5) {
+    rows = runWith(` AND b.subject IN (${marks})`, subjects, limit);
+  } else if (subjects.length) {
+    const own = runWith(` AND b.subject IN (${marks})`, subjects, limit);
+    const other = runWith(` AND b.subject NOT IN (${marks})`, subjects, limit);
+    const nOwn = Math.min(own.length, Math.max(limit - other.length, Math.ceil(limit / 2)));
+    rows = [...own.slice(0, nOwn), ...other.slice(0, limit - nOwn)];
+  } else {
+    rows = runWith('', [], limit);
   }
   return rows.map((r) => {
     const lower = String(r.text).toLowerCase();

@@ -3,12 +3,44 @@
 // Only public http(s) pages are fetched. PubMed is not used.
 import { bookPassages } from './books.mjs';
 import { questionTerms, planResearchQuery, rankWebHits, passageWindow, passagesCoverQuestion } from './searchPlanner.mjs';
+import { officialDomainsFor, isOfficialHost } from './guidelineSources.mjs';
+import { cached, keylessPapers, keylessPages } from './keylessSources.mjs';
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) PulseMed/0.2 (study tool)';
 const TRUSTED = /(nih\.gov|ncbi\.nlm|who\.int|cdc\.gov|nice\.org\.uk|medlineplus|mayoclinic|msdmanuals|statpearls|radiopaedia|cochrane|bmj\.com|thelancet|nejm|jamanetwork|icmr|mohfw|aiims)/i;
 
 const ents = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&#x27;': "'", '&nbsp;': ' ' };
 const decode = (s) => s.replace(/&(amp|lt|gt|quot|nbsp|#39|#x27);/g, (m) => ents[m] ?? m);
 const strip = (h) => decode(h.replace(/<(script|style|nav|header|footer|aside|svg|noscript|form)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+
+// Page text that keeps table structure. `strip` runs every cell together ("Rifampicin 600 mg ... Clofazimine ... Dapsone"),
+// so a table that lists the same drugs for two groups reads as if each drug belonged to one group (the leprosy PB/MB
+// table lost clofazimine from PB that way). Here a cell ends with " | " and a row ends with a new line, and headings
+// and list items start on their own line, so the model sees which cells sit together.
+// Inside a table, text inside a cell (paragraphs, divs, line breaks) is joined on one line, so a row stays one line.
+const flattenTable = (t) => {
+  const cleanCell = (html) => html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(?:p|div|li|span|a|b|strong|em|caption|h[1-6])>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const rows = [];
+  t.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi, (_, row) => {
+    const cells = [];
+    row.replace(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]\s*>/gi, (__, cell) => {
+      cells.push(cleanCell(cell));
+    });
+    if (cells.length) rows.push(cells.join(' | '));
+    return '';
+  });
+  return rows.join('\n');
+};
+const stripPage = (h) => decode(
+  h.replace(/<(script|style|nav|header|footer|aside|svg|noscript|form)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (t) => '\n' + flattenTable(t) + '\n')
+    .replace(/<\/(p|li|h[1-6]|div|section|article)>|<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' '),
+).replace(/[ \t\f\v\r]+/g, ' ').replace(/ \|(?= ?\n)/g, '').replace(/\s*\n\s*/g, '\n').trim();
 
 function isPublicUrl(u) {
   let x;
@@ -36,8 +68,17 @@ async function get(url, ms = 12000, net) {
   return r;
 }
 
-async function ddg(q, net) {
-  const html = await (await get('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), 12000, net)).text();
+// DuckDuckGo answers a rate-limited script with HTTP 202 and an "anomaly" page that has no results.
+// That must read as "blocked", not as "searched and found nothing", so the keyless fallbacks can take over.
+// Results are cached for ten minutes (only non-empty ones), so a repeated question does not hit the limit again.
+const ddg = (q, net) => cached('ddg:' + q, 10 * 60 * 1000, () => ddgFetch(q, net));
+async function ddgFetch(q, net) {
+  const res = await get('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), 12000, net);
+  const html = await res.text();
+  if (res.status === 202 || /anomaly|unusual traffic/i.test(html.slice(0, 20000)) && !/result__a/.test(html)) {
+    if (net) net.ok -= 1;
+    throw new Error('DuckDuckGo blocked this request (rate limit)');
+  }
   const out = [];
   const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   const snip = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => strip(m[1]));
@@ -51,6 +92,33 @@ async function ddg(q, net) {
     } catch { /* keep */ }
     if (isPublicUrl(href)) out.push({ title: strip(m[2]), url: href, snippet: snip[i] ?? '' });
     i++;
+  }
+  return out;
+}
+
+// Questions whose answer is a number, a regimen, a schedule or a classification that official bodies publish and revise.
+const GUIDELINE_QUESTION = /\b(regimens?|dos(?:e|es|age)|duration|schedules?|guidelines?|protocols?|cut-?offs?|criteria|classification|staging|first[- ]line|drug of choice|treatment|management|prophylaxis|programme|program|vaccin\w*|immuni[sz]ation|dosing|antidote)\b/i;
+
+/**
+ * A second search limited to the official sites of the question's subject (WHO, the Indian national programmes, the
+ * guideline-issuing societies). A general search often ranks a medical-information page above the guideline itself, and
+ * a book written some years ago may still show the older regimen. Two searches of four sites each keep the query short.
+ * Each search fails on its own and then simply adds nothing.
+ */
+async function officialHits(searchText, subject, net) {
+  const domains = officialDomainsFor(subject);
+  const groups = [domains.slice(0, 4), domains.slice(4, 8)].filter((g) => g.length);
+  const settled = await Promise.allSettled(groups.map((g) => ddg(`${searchText} ${g.map((d) => `site:${d}`).join(' OR ')}`, net)));
+  const seen = new Set();
+  const out = [];
+  for (const s of settled) {
+    if (s.status !== 'fulfilled') continue;
+    for (const hit of s.value) {
+      const key = hit.url.replace(/[#?].*$/, '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(hit);
+    }
   }
   return out;
 }
@@ -124,7 +192,7 @@ async function pageText(url, chars = FULL_PAGE_CAP, net) {
   }
 
   if (!/text\/html|text\/plain|xml/i.test(type)) throw new Error('not a web page');
-  return strip((await r.text()).slice(0, 1_500_000)).slice(0, cap);
+  return stripPage((await r.text()).slice(0, 1_500_000)).slice(0, cap);
 }
 
 // pageChars is accepted for older callers. pageText reads the whole page up to FULL_PAGE_CAP.
@@ -142,21 +210,50 @@ export async function research(query, pageChars = 2500, context = {}) {
   const net = newNet();
   // The subject steers the book search and the journals; the whole question steers ranking.
   const subject = plan.subject;
-  const [w, p, label] = await Promise.allSettled([
+  const wantsGuideline = GUIDELINE_QUESTION.test(`${context?.question || ''} ${query || ''}`);
+  const [w, p, label, official] = await Promise.allSettled([
     ddg(searchText, net),
     europePmc(searchText, journalsFor(subject), net),
     openFdaByDrug(searchText, net),
+    wantsGuideline ? officialHits(searchText, subject, net) : Promise.resolve([]),
   ]);
   // "The internet answered but had nothing" and "the internet could not be reached" are different
   // facts, and the learner is told which one happened. `net.ok` counts HTTP responses that actually
   // arrived, so a backend that swallows its own errors (openFDA) can no longer fake a live search.
+  // Fallbacks that need no key. Each source stands in for the others: when DuckDuckGo is blocked or thin, MedlinePlus
+  // and Wikipedia supply pages; when Europe PMC returns few papers, PubMed, OpenAlex and Crossref fill in.
+  const engineNotes = [];
+  let webHits = w.status === 'fulfilled' ? w.value : [];
+  if (w.status === 'rejected') engineNotes.push(`DuckDuckGo: ${String(w.reason?.message || w.reason)}`);
+  let papers = p.status === 'fulfilled' ? p.value : [];
+  if (p.status === 'rejected') engineNotes.push('Europe PMC failed');
+  const wantPapers = Math.max(0, 3 - papers.length);
+  const needPages = webHits.length < 2;
+  const [extraPapers, extraPages] = await Promise.all([
+    wantPapers > 0 ? cached('papers:' + searchText + ':' + wantPapers, 30 * 60 * 1000, () => keylessPapers(searchText, net, wantPapers)).catch(() => ({ sources: [], engines: [] })) : { sources: [], engines: [] },
+    needPages ? cached('pages:' + searchText, 30 * 60 * 1000, () => keylessPages(searchText, net)).catch(() => ({ sources: [], engines: [] })) : { sources: [], engines: [] },
+  ]);
+  const havePaperUrls = new Set(papers.map((x) => String(x.url || '').toLowerCase()));
+  papers = [...papers, ...extraPapers.sources.filter((x) => !havePaperUrls.has(String(x.url || '').toLowerCase()))].slice(0, 4);
+  const keylessPageHits = extraPages.sources.map((x) => ({ title: x.title, url: x.url, snippet: x.text, keylessText: x.text }));
+  for (const e of [...extraPapers.engines, ...extraPages.engines]) if (!e.ok) engineNotes.push(`${e.name}: ${e.error}`);
+  const usedFallbacks = [...extraPapers.engines, ...extraPages.engines].filter((e) => e.ok && e.count > 0).map((e) => e.name);
   const reachable = net.ok > 0;
   // Rank by whether the page shares the asked words. A trusted host is a small boost, not a
   // free pass to the front: two of the three old slots went to listed hosts that never held the fact.
-  const ranked = rankWebHits(w.status === 'fulfilled' ? w.value : [], plan, (url) => TRUSTED.test(String(url || '')));
-  const web = ranked.slice(0, 5);
-  const papers = p.status === 'fulfilled' ? p.value : [];
-  const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars, net)));
+  // The official-site hits join the general hits (the same page is kept once), and a listed official host is trusted.
+  const merged = [];
+  const seenUrl = new Set();
+  for (const hit of [...(official.status === 'fulfilled' ? official.value : []), ...webHits, ...keylessPageHits]) {
+    const key = String(hit.url || '').replace(/[#?].*$/, '');
+    if (!key || seenUrl.has(key)) continue;
+    seenUrl.add(key);
+    merged.push(hit);
+  }
+  const ranked = rankWebHits(merged, plan, (url) => TRUSTED.test(String(url || '')) || isOfficialHost(String(url || '')));
+  // Seven pages instead of five: an official page found by the second search must not push a good general page out.
+  const web = ranked.slice(0, wantsGuideline ? 7 : 5);
+  const pages = await Promise.allSettled(web.map((x) => (x.keylessText ? Promise.resolve(x.keylessText) : pageText(x.url, pageChars, net))));
   const readPages = web.map((x, i) => {
     const full = pages[i].status === 'fulfilled' ? pages[i].value : '';
     // Keep the part of the page that talks about the ask, not the opening lines.
@@ -220,7 +317,10 @@ export async function research(query, pageChars = 2500, context = {}) {
         : hasInternetSource && !coversQuestion
           ? 'The internet was reached and pages were read, but none of the passages read so far states the detail asked for.'
           : '';
-  return { sources, retrievedAt: new Date().toISOString().slice(0, 10), search, coversQuestion, detail };
+  const fallbackNote = usedFallbacks.length
+    ? `${w.status === 'rejected' ? 'The main web search was blocked or failed. ' : ''}Backup sources also answered: ${usedFallbacks.join(', ')}.`
+    : '';
+  return { sources, retrievedAt: new Date().toISOString().slice(0, 10), search, coversQuestion, detail: [detail, fallbackNote].filter(Boolean).join(' '), engineNotes };
 }
 
 /**

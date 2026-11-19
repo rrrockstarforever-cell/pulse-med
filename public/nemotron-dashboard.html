@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nemotron Control Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070b10;
+    --panel: #0d131b;
+    --panel-2: #111924;
+    --line: #1c2735;
+    --line-2: #26344a;
+    --text: #e6edf6;
+    --muted: #7d8ba1;
+    --dim: #4b5869;
+    --green: #76b900;        /* NVIDIA green */
+    --green-soft: #76b90022;
+    --cyan: #22d3ee;
+    --amber: #f59e0b;
+    --red: #f43f5e;
+    --blue: #60a5fa;
+    --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: Inter, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
+
+  /* ---------- sidebar ---------- */
+  .side { background: #090e14; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 18px; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #9be22a, #3f6b00); box-shadow: 0 0 18px #76b90066; font-weight: 800; color: #081000; font-size: 15px; }
+  .brand-name { font-weight: 800; letter-spacing: .3px; font-size: 15px; }
+  .brand-sub { font-size: 10px; letter-spacing: 2px; color: var(--green); font-weight: 700; }
+  .nav-h { font-size: 10px; letter-spacing: 1.6px; color: var(--dim); padding: 14px 18px 6px; font-weight: 700; }
+  .nav a { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 1px 8px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 500; }
+  .nav a:hover { background: var(--panel-2); color: var(--text); }
+  .nav a.on { background: linear-gradient(90deg, #76b90026, transparent); color: var(--text); box-shadow: inset 2px 0 0 var(--green); }
+  .nav svg { width: 16px; height: 16px; flex: none; }
+  .nav .count { margin-left: auto; font-size: 10px; background: var(--red); color: #fff; border-radius: 10px; padding: 1px 7px; font-weight: 700; }
+  .nav .count.ok { background: var(--line-2); color: var(--muted); }
+  .side-foot { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .sys { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .sys-grid { display: grid; grid-template-columns: 1fr 1fr; margin-top: 10px; font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+  .sys-grid b { display: block; font-size: 15px; color: var(--text); letter-spacing: 0; margin-top: 2px; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); flex: none; }
+  .dot.off { background: var(--red); box-shadow: 0 0 10px var(--red); }
+  .dot.idle { background: var(--dim); box-shadow: none; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ---------- main ---------- */
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .top { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #090e14cc; backdrop-filter: blur(8px); }
+  .crumb { color: var(--muted); }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .tag { font-size: 10px; font-weight: 700; letter-spacing: 1px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line-2); color: var(--muted); }
+  .tag.green { color: var(--green); border-color: #76b90066; background: var(--green-soft); }
+  .top .grow { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 20px; border: 1px solid var(--line-2); background: var(--panel); white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: #76b90055; }
+  .pill.bad { color: var(--red); border-color: #f43f5e55; }
+  .clock { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+
+  .content { flex: 1; overflow: auto; padding: 16px 18px 24px; }
+  .grid { display: grid; grid-template-columns: 270px minmax(0, 1fr) 360px; gap: 14px; min-height: 560px; }
+  .panel { background: linear-gradient(180deg, var(--panel), #0b1118); border: 1px solid var(--line); border-radius: 14px; min-width: 0; position: relative; overflow: hidden; }
+  .panel-h { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 12.5px; }
+  .panel-h .sub { color: var(--muted); font-weight: 500; font-size: 11px; }
+  .panel-h .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .live-badge { font-size: 9px; font-weight: 800; letter-spacing: 1px; color: var(--green); border: 1px solid #76b90066; border-radius: 5px; padding: 1px 6px; background: var(--green-soft); }
+
+  /* gauges column */
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .gauge-wrap { padding: 8px 14px 14px; }
+  .gauge-sub { font-family: var(--mono); font-size: 10.5px; color: var(--dim); padding: 0 0 6px; }
+  .gauge { position: relative; width: 190px; height: 190px; margin: 4px auto 0; }
+  .gauge svg { width: 100%; height: 100%; }
+  .gauge-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .gauge-num { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  .gauge-unit { font-size: 10px; letter-spacing: 2px; color: var(--muted); font-weight: 700; }
+  .gauge-max { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 9px; letter-spacing: 1.5px; color: var(--dim); border: 1px solid var(--line-2); padding: 2px 8px; border-radius: 5px; }
+  .spark-h { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin: 12px 0 6px; }
+  canvas.spark { width: 100%; height: 54px; display: block; }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 14px; }
+  .kv div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+  .kv span { font-size: 9.5px; letter-spacing: 1.2px; color: var(--dim); font-weight: 700; }
+  .kv b { display: block; font-size: 18px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .models { padding: 6px 8px 10px; }
+  .model-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; }
+  .model-row:hover { background: var(--panel-2); }
+  .model-row .nm { font-weight: 600; font-size: 12px; }
+  .model-row .id { font-family: var(--mono); font-size: 9.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-row .txt { min-width: 0; flex: 1; }
+  .model-row .busy { font-size: 9px; font-weight: 800; letter-spacing: 1px; color: var(--cyan); display: none; }
+  .model-row.working .busy { display: inline; }
+  .switch { width: 30px; height: 17px; border-radius: 10px; background: var(--line-2); position: relative; flex: none; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--dim); transition: .3s; }
+  .switch.on { background: #76b90055; }
+  .switch.on::after { left: 15px; background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+  /* graph */
+  .graph-panel { display: flex; flex-direction: column; min-height: 560px; }
+  .graph-meta { display: flex; gap: 12px; padding: 8px 14px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .graph-meta .a { color: var(--green); } .graph-meta .p { color: var(--cyan); } .graph-meta .i { color: var(--amber); }
+  .graph-box { position: relative; flex: 1; min-height: 420px; }
+  #graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .now-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12px; min-height: 42px; }
+  .now-bar .lbl { font-size: 9.5px; letter-spacing: 1.4px; font-weight: 800; color: var(--dim); }
+  .now-bar .msg { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* terminal */
+  .term { display: flex; flex-direction: column; min-height: 560px; max-height: calc(100vh - 110px); }
+  .term-h { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border-bottom: 1px solid var(--line); }
+  .lights { display: flex; gap: 6px; }
+  .lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .term-title { font-weight: 700; font-size: 12.5px; margin-left: 6px; }
+  .term-actions { margin-left: auto; display: flex; gap: 4px; }
+  .icon-btn { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); border: 1px solid transparent; }
+  .icon-btn:hover { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
+  .icon-btn.on { color: var(--amber); border-color: #f59e0b55; }
+  .icon-btn svg { width: 14px; height: 14px; }
+  .chips { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .chip { display: inline-flex; gap: 6px; align-items: center; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 7px; border: 1px solid; opacity: .45; transition: .2s; }
+  .chip.on { opacity: 1; }
+  .chip b { font-family: var(--mono); font-size: 10.5px; }
+  .chip.info { color: var(--blue); border-color: #60a5fa66; background: #60a5fa14; }
+  .chip.success { color: var(--green); border-color: #76b90066; background: #76b90014; }
+  .chip.tool { color: var(--cyan); border-color: #22d3ee66; background: #22d3ee14; }
+  .chip.warn { color: var(--amber); border-color: #f59e0b66; background: #f59e0b14; }
+  .chip.error { color: var(--red); border-color: #f43f5e66; background: #f43f5e14; }
+  .log { flex: 1; overflow-y: auto; padding: 6px 4px 10px; font-family: var(--mono); font-size: 11px; }
+  .row { display: grid; grid-template-columns: 58px 62px 1fr; gap: 8px; padding: 6px 8px; border-radius: 6px; line-height: 1.45; animation: slidein .35s ease-out; }
+  .row:hover { background: #ffffff06; }
+  @keyframes slidein { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+  .row .t { color: var(--dim); }
+  .lvl { font-size: 9px; font-weight: 800; letter-spacing: .8px; padding: 1px 0; border-radius: 4px; text-align: center; height: fit-content; border: 1px solid; }
+  .lvl.info { color: var(--blue); border-color: #60a5fa55; background: #60a5fa12; }
+  .lvl.success { color: var(--green); border-color: #76b90055; background: #76b90012; }
+  .lvl.tool { color: var(--cyan); border-color: #22d3ee55; background: #22d3ee12; }
+  .lvl.warn { color: var(--amber); border-color: #f59e0b55; background: #f59e0b12; }
+  .lvl.error { color: var(--red); border-color: #f43f5e55; background: #f43f5e12; }
+  .row .who { font-weight: 700; margin-right: 6px; }
+  .row .m { color: #c3cddb; word-break: break-word; }
+  .empty { color: var(--dim); text-align: center; padding: 40px 16px; font-family: Inter, sans-serif; }
+
+  /* lower section */
+  .lower { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; margin-top: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 9.5px; letter-spacing: 1.3px; color: var(--dim); font-weight: 700; padding: 9px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+  td { padding: 9px 12px; border-bottom: 1px solid #ffffff08; font-size: 12px; vertical-align: middle; }
+  tr.run { cursor: pointer; }
+  tr.run:hover td { background: #ffffff05; }
+  .st { font-size: 9.5px; font-weight: 800; letter-spacing: 1px; padding: 2px 8px; border-radius: 5px; }
+  .st.completed { color: var(--green); background: #76b9001a; }
+  .st.partial { color: var(--amber); background: #f59e0b1a; }
+  .st.failed { color: var(--red); background: #f43f5e1a; }
+  .st.running { color: var(--cyan); background: #22d3ee1a; animation: pulse 1.6s infinite; }
+  .mono { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .mchips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mchip { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line-2); }
+  tr.detail td { background: #070b10; padding: 0; }
+  .timeline { padding: 10px 16px; font-family: var(--mono); font-size: 11px; max-height: 240px; overflow: auto; }
+  .timeline div { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 3px 0; color: #c3cddb; }
+  .timeline span { color: var(--dim); }
+  .table-wrap { max-height: 380px; overflow: auto; }
+
+  .test { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .test textarea { width: 100%; min-height: 84px; resize: vertical; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px; color: var(--text); padding: 10px 12px; font: inherit; outline: none; }
+  .test textarea:focus { border-color: #76b90088; box-shadow: 0 0 0 3px #76b9001f; }
+  .btn { align-self: flex-start; display: inline-flex; gap: 8px; align-items: center; padding: 9px 16px; border-radius: 9px; font-weight: 700; background: linear-gradient(180deg, #86cc0b, #5d9300); color: #0a1400; box-shadow: 0 0 18px #76b90044; }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .answer { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; font-size: 12.5px; line-height: 1.55; display: none; }
+  .answer.err { border-color: #f43f5e55; color: #fda4af; }
+  .hint { color: var(--dim); font-size: 11px; }
+
+  @media (max-width: 1380px) {
+    .grid { grid-template-columns: 250px minmax(0, 1fr); }
+    .term { grid-column: 1 / -1; max-height: 420px; min-height: 340px; }
+  }
+  @media (max-width: 980px) {
+    body { overflow: auto; }
+    .app { grid-template-columns: 1fr; height: auto; }
+    .side { display: none; }
+    .content { padding: 12px 16px 24px; }
+    .grid, .lower { grid-template-columns: 1fr; }
+    .graph-panel { min-height: 460px; }
+    .top .clock, #pill-sys { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ================= Sidebar ================= -->
+  <aside class="side">
+    <div class="brand">
+      <div class="brand-logo">N</div>
+      <div><div class="brand-name">Nemotron Ops</div><div class="brand-sub">CONTROL CENTER</div></div>
+    </div>
+    <div class="nav-h">CORE</div>
+    <nav class="nav">
+      <a href="#sec-overview" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Dashboard</a>
+      <a href="#sec-graph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5 6.5 17M12 11.5l5.5 5.5"/></svg>Agent Hand-off</a>
+      <a href="#sec-models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg>Nemotron Models<span class="count ok" id="nav-models">0</span></a>
+      <a href="#sec-log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h13"/></svg>Live Stream<span class="count ok" id="nav-events">0</span></a>
+    </nav>
+    <div class="nav-h">INSIGHTS</div>
+    <nav class="nav">
+      <a href="#sec-runs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Run History<span class="count" id="nav-failed" style="display:none">0</span></a>
+      <a href="#sec-test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>Test Console</a>
+    </nav>
+    <div class="side-foot">
+      <div class="sys"><span class="dot pulse" id="sys-dot"></span><span id="sys-text">Connecting…</span></div>
+      <div class="sys-grid">
+        <div>MODELS<b id="sys-models">–</b></div>
+        <div>UPTIME<b id="sys-uptime">–</b></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= Main ================= -->
+  <main class="main">
+    <header class="top">
+      <span class="crumb">Nemotron Ops / <b>Dashboard</b></span>
+      <span class="tag green">NIM</span>
+      <span class="grow"></span>
+      <span class="pill" id="pill-live"><span class="dot idle" id="live-dot"></span><span id="live-text">Offline</span></span>
+      <span class="pill" id="pill-sys"><span class="dot idle" id="sys2-dot"></span><span id="sys2-text">Checking gateway…</span></span>
+      <span class="clock" id="clock">--:--:--</span>
+    </header>
+
+    <div class="content" id="sec-overview">
+      <div class="grid">
+        <!-- ---------- left column: gauges + models ---------- -->
+        <div class="col">
+          <section class="panel">
+            <div class="panel-h">Throughput &amp; Tokens <span class="right"><span class="live-badge">LIVE</span></span></div>
+            <div class="gauge-wrap">
+              <div class="gauge-sub" id="gauge-sub">tokens: 0 in · 0 out</div>
+              <div class="gauge">
+                <svg viewBox="0 0 200 200">
+                  <defs>
+                    <linearGradient id="gGrad" x1="0" y1="1" x2="1" y2="0">
+                      <stop offset="0" stop-color="#3f6b00"/><stop offset=".6" stop-color="#76b900"/><stop offset="1" stop-color="#22d3ee"/>
+                    </linearGradient>
+                    <filter id="gGlow"><feGaussianBlur stdDeviation="3.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                  </defs>
+                  <g id="ticks"></g>
+                  <path id="g-track" fill="none" stroke="#1c2735" stroke-width="12" stroke-linecap="round"/>
+                  <path id="g-arc" fill="none" stroke="url(#gGrad)" stroke-width="12" stroke-linecap="round" filter="url(#gGlow)"/>
+                </svg>
+                <div class="gauge-center"><div><div class="gauge-num" id="g-num">0</div><div class="gauge-unit">TOKENS / SEC</div></div></div>
+                <div class="gauge-max" id="g-max">MAX 50</div>
+              </div>
+              <div class="spark-h"><span>Token burn · last 5 min</span><span class="mono" id="spark-total">0</span></div>
+              <canvas class="spark" id="spark"></canvas>
+            </div>
+            <div class="kv">
+              <div><span>REQUESTS</span><b id="k-req">0</b></div>
+              <div><span>SUCCESS</span><b id="k-ok">–</b></div>
+              <div><span>AVG TURN</span><b id="k-lat">–</b></div>
+              <div><span>DELEGATIONS</span><b id="k-del">0</b></div>
+            </div>
+          </section>
+
+          <section class="panel" id="sec-models">
+            <div class="panel-h">Nemotron Models <span class="sub" id="models-sub"></span></div>
+            <div class="models" id="models"><div class="empty">Loading…</div></div>
+          </section>
+        </div>
+
+        <!-- ---------- center: hand-off graph ---------- -->
+        <section class="panel graph-panel" id="sec-graph">
+          <div class="panel-h">Agent Hand-off <span class="live-badge">LIVE</span><span class="right sub">Super orchestrates · specialists run in parallel</span></div>
+          <div class="graph-meta"><span class="a" id="gm-active">0 active</span>·<span class="p" id="gm-proc">0 processing</span>·<span class="i" id="gm-idle">0 idle</span></div>
+          <div class="graph-box"><canvas id="graph"></canvas></div>
+          <div class="now-bar"><span class="lbl">NOW</span><span class="dot idle" id="now-dot"></span><span class="msg" id="now-msg">Waiting for the next request…</span></div>
+        </section>
+
+        <!-- ---------- right: terminal ---------- -->
+        <section class="panel term" id="sec-log">
+          <div class="term-h">
+            <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+            <span class="term-title">Live Stream Terminal</span>
+            <span class="live-badge" id="term-live">LIVE</span>
+            <div class="term-actions">
+              <button class="icon-btn" id="btn-pause" title="Pause auto-scroll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5v14M15 5v14"/></svg></button>
+              <button class="icon-btn" id="btn-clear" title="Clear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+              <button class="icon-btn" id="btn-bottom" title="Jump to latest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
+            </div>
+          </div>
+          <div class="chips" id="chips">
+            <button class="chip info on" data-l="info">Info <b>0</b></button>
+            <button class="chip success on" data-l="success">Success <b>0</b></button>
+            <button class="chip tool on" data-l="tool">Tool <b>0</b></button>
+            <button class="chip warn on" data-l="warn">Warning <b>0</b></button>
+            <button class="chip error on" data-l="error">Error <b>0</b></button>
+          </div>
+          <div class="log" id="log"><div class="empty">No events yet. Use Nemotron Orchestrator in Claude Desktop, or the Test Console below.</div></div>
+        </section>
+      </div>
+
+      <div class="lower">
+        <section class="panel" id="sec-runs">
+          <div class="panel-h">Run History <span class="sub">click a run to see every step</span><span class="right sub" id="runs-sub"></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>STATUS</th><th>SOURCE</th><th>WHAT HAPPENED</th><th>MODELS</th><th>TOKENS</th><th>TIME</th><th>STARTED</th></tr></thead>
+              <tbody id="runs"><tr><td colspan="7" class="empty">No runs yet.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="sec-test">
+          <div class="panel-h">Test Console <span class="sub">full 8-phase orchestration</span></div>
+          <div class="test">
+            <textarea id="test-input" placeholder="Ask something… e.g. Compare quicksort and mergesort, and give a JavaScript example of each."></textarea>
+            <button class="btn" id="run-btn">▶ Run orchestration</button>
+            <div class="answer" id="answer"></div>
+            <div class="hint">Claude Desktop turns show up here automatically when you pick “Nemotron Orchestrator” in CC Switch.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  // Opened straight from disk (file://) the page can't use relative URLs, so talk to the local gateway.
+  const GATEWAY = 'http://127.0.0.1:8093';
+  const onGateway = (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && location.port === '8093';
+  const API = (onGateway ? '' : GATEWAY) + '/api/nemotron';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmtN = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : Math.round(n).toLocaleString();
+  const fmtMs = (ms) => ms == null ? '–' : ms < 1000 ? ms + 'ms' : ms < 60000 ? (ms / 1000).toFixed(1) + 's' : Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+  const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour12: false });
+
+  // ------------------------------------------------------------------
+  // Nemotron roles → display info. Only Nemotron models appear here.
+  // ------------------------------------------------------------------
+  const ROLE_INFO = {
+    'orchestrator':                  { short: 'SUPER',     color: '#76b900', glyph: 'S', desc: 'Chief orchestrator' },
+    'general-reasoning':             { short: 'NANO',      color: '#60a5fa', glyph: 'N', desc: 'General reasoning' },
+    'high-throughput':               { short: 'LIGHTNING', color: '#facc15', glyph: 'L', desc: 'High throughput' },
+    'lightweight-autonomous':        { short: 'BOLT',      color: '#a78bfa', glyph: 'B', desc: 'Lightweight tasks' },
+    'multimodal':                    { short: 'NANO OMNI', color: '#f472b6', glyph: 'O', desc: 'Multimodal' },
+    'advanced-reasoning-escalation': { short: 'ULTRA',     color: '#f97316', glyph: 'U', desc: 'Hard-problem escalation' },
+  };
+  const CLIENT = { role: 'client', short: 'YOUR APP', color: '#22d3ee', glyph: '⌘', desc: 'Claude Desktop · tools' };
+
+  let models = [];          // [{role, model, available}]
+  let superModelId = '';
+  const startedAt = Date.now();
+
+  // ------------------------------------------------------------------
+  // State built from events
+  // ------------------------------------------------------------------
+  const runs = new Map();      // executionId -> run
+  const seen = new Set();      // eventIds already processed
+  const tokenEvents = [];      // {t, in, out}
+  const active = new Map();    // role -> {since, count}
+  const nodeStats = new Map(); // role -> {done, failed}
+  let delegations = 0;
+
+  function roleForEvent(ev) {
+    if (!ev.modelId) return null;
+    if (ev.modelId === superModelId || /super/i.test(ev.modelId)) return 'orchestrator';
+    const msg = ev.message || '';
+    const byMsg = models.find((m) => m.role !== 'orchestrator' && msg.includes(m.role));
+    if (byMsg) return byMsg.role;
+    const byModel = models.find((m) => m.role !== 'orchestrator' && m.model === ev.modelId);
+    return byModel ? byModel.role : null;
+  }
+
+  function levelOf(ev) {
+    switch (ev.type) {
+      case 'agent_failed': case 'error': return 'error';
+      case 'agent_completed': return 'success';
+      case 'execution_completed': return ev.status === 'completed' ? 'success' : ev.status === 'partial' ? 'warn' : 'error';
+      case 'verification_completed': return ev.status === 'needs_revision' ? 'warn' : 'success';
+      case 'agent_progress': return /^Tool/.test(ev.message || '') ? 'tool' : 'info';
+      default: return 'info';
+    }
+  }
+
+  function runFor(ev) {
+    let r = runs.get(ev.executionId);
+    if (!r) {
+      r = { id: ev.executionId, source: ev.executionId.startsWith('gw_') ? 'Claude Desktop' : 'Test Console', start: ev.timestamp, end: null,
+            status: 'running', events: [], models: new Set(), tokens: 0, delegations: 0, tools: [] };
+      runs.set(ev.executionId, r);
+    }
+    return r;
+  }
+
+  function ingest(ev, live) {
+    if (!ev || !ev.eventId || seen.has(ev.eventId)) return;
+    seen.add(ev.eventId);
+    const r = runFor(ev);
+    r.events.push(ev);
+    const role = roleForEvent(ev);
+    if (role) r.models.add(role);
+
+    const tIn = ev.metrics?.inputTokens || 0, tOut = ev.metrics?.outputTokens || 0;
+    if (ev.type === 'agent_completed' && (tIn || tOut)) {
+      tokenEvents.push({ t: Date.parse(ev.timestamp), in: tIn, out: tOut });
+      r.tokens += tIn + tOut;
+    }
+    if (ev.type === 'agent_progress' && /^Tool/.test(ev.message || '')) r.tools.push((ev.message || '').replace(/^Tool → /, '').split(' ')[0]);
+    if (ev.type === 'agent_completed' && /delegates/.test(ev.message || '')) { r.delegations++; delegations++; }
+    if (ev.type === 'execution_completed') { r.status = ev.status || 'completed'; r.end = ev.timestamp; r.latency = ev.metrics?.latencyMs; }
+    if (ev.type === 'error' && r.status === 'running') { r.status = 'failed'; r.end = ev.timestamp; }
+    if (role && (ev.type === 'agent_completed' || ev.type === 'agent_failed')) {
+      const s = nodeStats.get(role) || { done: 0, failed: 0 };
+      ev.type === 'agent_completed' ? s.done++ : s.failed++;
+      nodeStats.set(role, s);
+    }
+
+    // Live-only effects: animations, "now" bar, which nodes are lit.
+    if (live) {
+      animateEvent(ev, role);
+      setNow(ev, role);
+      // assigned = lit and waiting; started = one more call in flight; completed/failed = one fewer.
+      if (role && ev.type === 'agent_assigned' && !active.has(role)) active.set(role, { since: Date.now(), count: 0 });
+      if (role && ev.type === 'agent_started') { const a = active.get(role) || { since: Date.now(), count: 0 }; a.count++; active.set(role, a); }
+      if (role && (ev.type === 'agent_completed' || ev.type === 'agent_failed')) {
+        const a = active.get(role);
+        if (a) { a.count--; if (a.count <= 0) active.delete(role); }
+      }
+      if (ev.type === 'execution_completed' || ev.type === 'error') {
+        // A finished turn clears anything still lit.
+        setTimeout(() => { if (![...runs.values()].some((x) => x.status === 'running')) active.clear(); }, 700);
+      }
+    }
+    appendLog(ev, role);
+  }
+
+  // ------------------------------------------------------------------
+  // Terminal
+  // ------------------------------------------------------------------
+  const logEl = $('log');
+  const counts = { info: 0, success: 0, tool: 0, warn: 0, error: 0 };
+  const filters = new Set(['info', 'success', 'tool', 'warn', 'error']);
+  let paused = false, totalEvents = 0;
+
+  function appendLog(ev, role) {
+    const lvl = levelOf(ev);
+    counts[lvl]++; totalEvents++;
+    if (logEl.querySelector('.empty')) logEl.innerHTML = '';
+    const info = role ? (ROLE_INFO[role] || {}) : { short: ev.type.startsWith('execution') ? 'GATEWAY' : 'SYSTEM', color: '#94a3b8' };
+    const row = document.createElement('div');
+    row.className = 'row'; row.dataset.l = lvl;
+    if (!filters.has(lvl)) row.style.display = 'none';
+    const tok = (ev.metrics?.inputTokens || 0) + (ev.metrics?.outputTokens || 0);
+    row.innerHTML = `<span class="t">${timeOf(ev.timestamp)}</span><span class="lvl ${lvl}">${lvl === 'warn' ? 'WARN' : lvl.toUpperCase()}</span>`
+      + `<span><span class="who" style="color:${info.color}">${esc(info.short || '')}</span><span class="m">${esc(ev.message || ev.type)}`
+      + `${ev.metrics?.latencyMs ? ` <span style="color:var(--dim)">· ${fmtMs(ev.metrics.latencyMs)}</span>` : ''}`
+      + `${tok ? ` <span style="color:var(--dim)">· ${fmtN(tok)} tok</span>` : ''}</span></span>`;
+    logEl.appendChild(row);
+    while (logEl.children.length > 500) logEl.firstChild.remove();
+    if (!paused) logEl.scrollTop = logEl.scrollHeight;
+    scheduleChrome();
+  }
+
+  $('chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    const l = chip.dataset.l;
+    filters.has(l) ? filters.delete(l) : filters.add(l);
+    chip.classList.toggle('on', filters.has(l));
+    for (const row of logEl.querySelectorAll('.row')) row.style.display = filters.has(row.dataset.l) ? '' : 'none';
+  });
+  $('btn-pause').onclick = () => { paused = !paused; $('btn-pause').classList.toggle('on', paused); $('term-live').textContent = paused ? 'PAUSED' : 'LIVE'; };
+  $('btn-clear').onclick = () => { logEl.innerHTML = '<div class="empty">Cleared. New events will appear here.</div>'; };
+  $('btn-bottom').onclick = () => { logEl.scrollTop = logEl.scrollHeight; };
+
+  // ------------------------------------------------------------------
+  // Counters, models list, run table (batched once per frame)
+  // ------------------------------------------------------------------
+  let chromeQueued = false;
+  function scheduleChrome() { if (!chromeQueued) { chromeQueued = true; requestAnimationFrame(() => { chromeQueued = false; renderChrome(); }); } }
+
+  function renderChrome() {
+    for (const chip of document.querySelectorAll('.chip')) chip.querySelector('b').textContent = counts[chip.dataset.l];
+    $('nav-events').textContent = totalEvents > 999 ? '999+' : totalEvents;
+    const all = [...runs.values()];
+    const done = all.filter((r) => r.status !== 'running');
+    const ok = done.filter((r) => r.status === 'completed').length;
+    const failed = done.filter((r) => r.status === 'failed').length;
+    $('k-req').textContent = all.length;
+    $('k-ok').textContent = done.length ? Math.round((ok / done.length) * 100) + '%' : '–';
+    const lats = done.map((r) => r.latency).filter(Boolean);
+    $('k-lat').textContent = lats.length ? fmtMs(Math.round(lats.reduce((a, b) => a + b, 0) / lats.length)) : '–';
+    $('k-del').textContent = delegations;
+    const nf = $('nav-failed'); nf.textContent = failed; nf.style.display = failed ? '' : 'none';
+    const tin = tokenEvents.reduce((a, e) => a + e.in, 0), tout = tokenEvents.reduce((a, e) => a + e.out, 0);
+    $('gauge-sub').textContent = `tokens: ${fmtN(tin)} in · ${fmtN(tout)} out`;
+    renderModels();
+    renderRuns();
+  }
+
+  function renderModels() {
+    if (!models.length) return;
+    const list = models.slice().sort((a, b) => (a.role === 'orchestrator' ? -1 : b.role === 'orchestrator' ? 1 : 0));
+    $('models').innerHTML = list.map((m) => {
+      const info = ROLE_INFO[m.role] || { short: m.role, color: '#94a3b8' };
+      const st = nodeStats.get(m.role), working = active.has(m.role);
+      return `<div class="model-row ${working ? 'working' : ''}">
+        <span class="dot ${m.available ? (working ? 'pulse' : '') : 'idle'}" style="${m.available ? `background:${info.color};box-shadow:0 0 10px ${info.color}` : ''}"></span>
+        <div class="txt"><div class="nm">${esc(info.short)} <span class="busy">● WORKING</span></div><div class="id" title="${esc(m.model)}">${esc(m.model.replace(/^nvidia\//, ''))}${st ? ` · ${st.done} done${st.failed ? ', ' + st.failed + ' failed' : ''}` : ''}</div></div>
+        <span class="switch ${m.available ? 'on' : ''}" title="${m.available ? 'Enabled' : 'Disabled in config'}"></span>
+      </div>`;
+    }).join('');
+    const on = models.filter((m) => m.available).length;
+    $('models-sub').textContent = `${on}/${models.length} enabled`;
+    $('nav-models').textContent = on;
+    $('sys-models').textContent = `${on}/${models.length}`;
+  }
+
+  const openRuns = new Set();
+  function describeRun(r) {
+    const parts = [];
+    if (r.delegations) parts.push(`${r.delegations} delegation round${r.delegations > 1 ? 's' : ''}`);
+    if (r.tools.length) parts.push(`tools: ${[...new Set(r.tools)].join(', ')}`);
+    const last = [...r.events].reverse().find((e) => e.type === 'agent_completed' && /Super/.test(e.message || ''));
+    if (!parts.length && last) parts.push(last.message);
+    if (!parts.length) { const first = r.events.find((e) => e.type === 'execution_started'); parts.push(first?.message || '—'); }
+    return parts.join(' · ');
+  }
+  function renderRuns() {
+    const list = [...runs.values()].sort((a, b) => Date.parse(b.start) - Date.parse(a.start)).slice(0, 40);
+    $('runs-sub').textContent = runs.size ? `${runs.size} total` : '';
+    if (!list.length) return;
+    $('runs').innerHTML = list.map((r) => {
+      const dur = r.latency ?? (r.end ? Date.parse(r.end) - Date.parse(r.start) : Date.now() - Date.parse(r.start));
+      const mchips = [...r.models].map((m) => { const i = ROLE_INFO[m] || { short: m, color: '#94a3b8' }; return `<span class="mchip" style="color:${i.color};border-color:${i.color}55">${esc(i.short)}</span>`; }).join('');
+      const what = describeRun(r);
+      const row = `<tr class="run" data-id="${esc(r.id)}">
+        <td><span class="st ${r.status}">${r.status.toUpperCase()}</span></td>
+        <td>${esc(r.source)}</td>
+        <td style="max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(what)}">${esc(what)}</td>
+        <td><div class="mchips">${mchips || '<span class="mono">–</span>'}</div></td>
+        <td class="mono">${r.tokens ? fmtN(r.tokens) : '–'}</td>
+        <td class="mono">${fmtMs(dur)}</td>
+        <td class="mono">${timeOf(r.start)}</td></tr>`;
+      const detail = openRuns.has(r.id)
+        ? `<tr class="detail"><td colspan="7"><div class="timeline">${r.events.map((e) => `<div><span>${timeOf(e.timestamp)}</span>${esc(e.message || e.type)}${e.metrics?.latencyMs ? ` <span>· ${fmtMs(e.metrics.latencyMs)}</span>` : ''}</div>`).join('')}</div></td></tr>`
+        : '';
+      return row + detail;
+    }).join('');
+  }
+  $('runs').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr.run'); if (!tr) return;
+    const id = tr.dataset.id; openRuns.has(id) ? openRuns.delete(id) : openRuns.add(id);
+    renderRuns();
+  });
+
+  // ------------------------------------------------------------------
+  // Gauge (tokens per second over the last 30 s)
+  // ------------------------------------------------------------------
+  const G = { cx: 100, cy: 100, r: 78, a0: 135, a1: 405 };
+  const polar = (a, r = G.r) => { const rad = (a * Math.PI) / 180; return [G.cx + r * Math.cos(rad), G.cy + r * Math.sin(rad)]; };
+  const arcPath = (a0, a1) => { const [x0, y0] = polar(a0), [x1, y1] = polar(a1); return `M${x0},${y0} A${G.r},${G.r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1},${y1}`; };
+  $('g-track').setAttribute('d', arcPath(G.a0, G.a1));
+  (() => { let t = ''; for (let i = 0; i <= 40; i++) { const a = G.a0 + (i / 40) * (G.a1 - G.a0); const [x0, y0] = polar(a, 94), [x1, y1] = polar(a, i % 5 ? 90 : 86); t += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${i % 5 ? '#1c2735' : '#33445c'}" stroke-width="1.5"/>`; } $('ticks').innerHTML = t; })();
+  let gaugeShown = 0, gaugeMax = 50;
+  function tokensPerSec() {
+    const now = Date.now(), win = 30000;
+    const sum = tokenEvents.filter((e) => now - e.t < win).reduce((a, e) => a + e.in + e.out, 0);
+    return sum / (win / 1000);
+  }
+  function tickGauge() {
+    const target = tokensPerSec();
+    gaugeMax = Math.max(50, Math.ceil(Math.max(gaugeMax * 0.998, target * 1.25) / 10) * 10);
+    gaugeShown += (target - gaugeShown) * 0.08;
+    if (Math.abs(target - gaugeShown) < 0.05) gaugeShown = target;
+    const frac = Math.min(1, gaugeShown / gaugeMax);
+    $('g-arc').setAttribute('d', frac > 0.002 ? arcPath(G.a0, G.a0 + frac * (G.a1 - G.a0)) : '');
+    $('g-num').textContent = gaugeShown >= 10 ? Math.round(gaugeShown) : gaugeShown.toFixed(1).replace(/\.0$/, '');
+    $('g-max').textContent = 'MAX ' + fmtN(gaugeMax);
+  }
+
+  // Sparkline: tokens per 5-second bucket over 5 minutes.
+  function drawSpark() {
+    const c = $('spark'), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (!w) return;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const now = Date.now(), N = 60, span = 5 * 60000, bucket = span / N, vals = new Array(N).fill(0);
+    let total = 0;
+    for (const e of tokenEvents) { const age = now - e.t; if (age >= 0 && age < span) { vals[N - 1 - Math.floor(age / bucket)] += e.in + e.out; total += e.in + e.out; } }
+    $('spark-total').textContent = fmtN(total) + ' tok';
+    const max = Math.max(...vals, 1);
+    const pts = vals.map((v, i) => [(i / (N - 1)) * w, h - 4 - (v / max) * (h - 10)]);
+    const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, '#76b90055'); grad.addColorStop(1, '#76b90000');
+    g.beginPath(); g.moveTo(0, h); pts.forEach(([x, y]) => g.lineTo(x, y)); g.lineTo(w, h); g.fillStyle = grad; g.fill();
+    g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    g.strokeStyle = '#76b900'; g.lineWidth = 1.6; g.shadowColor = '#76b900'; g.shadowBlur = 6; g.stroke(); g.shadowBlur = 0;
+  }
+
+  // ------------------------------------------------------------------
+  // Hand-off graph (canvas)
+  // ------------------------------------------------------------------
+  const canvas = $('graph'), ctx = canvas.getContext('2d');
+  let W = 0, H = 0, nodes = [], particles = [], ripples = [];
+  const edgeHeat = new Map(); // "a>b" -> 0..1
+
+  function layout() {
+    const dpr = devicePixelRatio || 1, rect = canvas.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    if (!W || !H) return;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const specs = models.filter((m) => m.role !== 'orchestrator');
+    const R = Math.max(22, Math.min(W * 0.065, H * 0.075));
+    const sx = W * 0.42, sy = H * 0.47;
+    nodes = [
+      { role: 'client', x: Math.max(R + 30, W * 0.1), y: sy, r: R * 0.85, info: CLIENT, available: true },
+      { role: 'orchestrator', x: sx, y: sy, r: R * 1.2, info: ROLE_INFO.orchestrator, available: true },
+    ];
+    const n = specs.length, rx = Math.max(R * 3, Math.min(W * 0.42, W - sx - R - 40)), ry = H * 0.36;
+    specs.forEach((m, i) => {
+      const a = n === 1 ? 0 : (-70 + (140 * i) / (n - 1)) * Math.PI / 180;
+      nodes.push({ role: m.role, x: sx + rx * Math.cos(a), y: sy + ry * Math.sin(a), r: R, info: ROLE_INFO[m.role] || { short: m.role, color: '#94a3b8', glyph: '?', desc: '' }, available: m.available });
+    });
+  }
+  const nodeOf = (role) => nodes.find((n) => n.role === role);
+
+  function curve(a, b) {
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y;
+    return { cx: mx - dy * 0.12, cy: my + dx * 0.12 };
+  }
+  function pointOn(a, b, t) {
+    const { cx, cy } = curve(a, b), u = 1 - t;
+    return [u * u * a.x + 2 * u * t * cx + t * t * b.x, u * u * a.y + 2 * u * t * cy + t * t * b.y];
+  }
+  function send(fromRole, toRole, color, n = 6) {
+    const a = nodeOf(fromRole), b = nodeOf(toRole);
+    if (!a || !b) return;
+    for (let i = 0; i < n; i++) particles.push({ a, b, t: -i * 0.07, speed: 0.012 + Math.random() * 0.004, color: color || a.info.color, size: 3 - i * 0.3 });
+    edgeHeat.set([fromRole, toRole].sort().join('>'), 1);
+  }
+  function ripple(role, color) { const n = nodeOf(role); if (n) ripples.push({ n, t: 0, color: color || n.info.color }); }
+
+  function animateEvent(ev, role) {
+    const t = ev.type;
+    if (t === 'execution_started') { send('client', 'orchestrator', CLIENT.color, 7); ripple('orchestrator'); }
+    else if (t === 'agent_assigned' && role && role !== 'orchestrator') send('orchestrator', role, ROLE_INFO.orchestrator.color, 7);
+    else if (t === 'agent_started' && role) ripple(role);
+    else if (t === 'agent_completed' && role && role !== 'orchestrator') { send(role, 'orchestrator', ROLE_INFO[role]?.color, 7); ripple(role, '#76b900'); }
+    else if (t === 'agent_progress' && /^Tool/.test(ev.message || '')) send('orchestrator', 'client', '#22d3ee', 7);
+    else if (t === 'execution_completed') { send('orchestrator', 'client', ev.status === 'completed' ? '#76b900' : '#f59e0b', 9); ripple('client', '#76b900'); }
+    else if (t === 'agent_failed' || t === 'error') ripple(role || 'orchestrator', '#f43f5e');
+  }
+
+  const anyRunning = () => { for (const r of runs.values()) if (r.status === 'running') return true; return false; };
+
+  function drawNode(n, now) {
+    const c = n.info.color;
+    const isActive = n.role === 'client' ? anyRunning() && !active.size : active.has(n.role);
+    const breathe = 0.5 + 0.5 * Math.sin(now / 900 + n.x);
+    ctx.save();
+    ctx.globalAlpha = n.available ? 1 : 0.35;
+    const gr = n.r * (isActive ? 2.5 : 1.8);
+    const glow = ctx.createRadialGradient(n.x, n.y, n.r * 0.6, n.x, n.y, gr);
+    glow.addColorStop(0, c + (isActive ? '55' : '22')); glow.addColorStop(1, c + '00');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(n.x, n.y, gr, 0, Math.PI * 2); ctx.fill();
+    const body = ctx.createRadialGradient(n.x - n.r * 0.3, n.y - n.r * 0.35, n.r * 0.1, n.x, n.y, n.r);
+    body.addColorStop(0, '#1b2636'); body.addColorStop(1, '#0a0f16');
+    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2.2; ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = isActive ? 22 + 10 * breathe : 8 + 4 * breathe; ctx.stroke(); ctx.shadowBlur = 0;
+    if (isActive) {
+      const a = (now / 380) % (Math.PI * 2);
+      ctx.lineWidth = 3; ctx.strokeStyle = c; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 7, a, a + 1.4); ctx.stroke();
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 7, a + Math.PI, a + Math.PI + 0.8); ctx.stroke();
+    }
+    if (n.role === 'orchestrator') {
+      ctx.setLineDash([2, 6]); ctx.lineWidth = 1; ctx.strokeStyle = c + '66';
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 18, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      for (let k = 0; k < 2; k++) {
+        const oa = now / (isActive ? 700 : 2200) + k * Math.PI;
+        const ox = n.x + (n.r + 18) * Math.cos(oa), oy = n.y + (n.r + 18) * Math.sin(oa);
+        ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(ox, oy, 3, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      }
+    }
+    ctx.fillStyle = c; ctx.font = `800 ${Math.round(n.r * 0.72)}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(n.info.glyph, n.x, n.y + 1);
+    ctx.fillStyle = !n.available ? '#4b5869' : isActive ? '#22d3ee' : '#76b900';
+    ctx.beginPath(); ctx.arc(n.x + n.r * 0.72, n.y - n.r * 0.72, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#0a0f16'; ctx.lineWidth = 2; ctx.stroke();
+    const labelY = n.y + n.r + (n.role === 'orchestrator' ? 26 : 12);
+    ctx.fillStyle = '#e6edf6'; ctx.font = `800 ${Math.max(10, Math.round(n.r * 0.3))}px Inter, sans-serif`; ctx.textBaseline = 'top';
+    ctx.fillText(n.info.short, n.x, labelY);
+    ctx.fillStyle = isActive ? '#22d3ee' : '#7d8ba1'; ctx.font = `500 ${Math.max(9, Math.round(n.r * 0.24))}px Inter, sans-serif`;
+    const st = nodeStats.get(n.role);
+    const sub = !n.available ? 'disabled' : isActive ? 'working…' : n.info.desc + (st?.done ? ` · ${st.done}✓` : '');
+    ctx.fillText(sub, n.x, labelY + Math.max(13, n.r * 0.38));
+    ctx.restore();
+  }
+
+  function frame(now) {
+    if (W && H) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#ffffff0a';
+      const step = 26, off = (now / 120) % step;
+      for (let x = -step + off; x < W; x += step) for (let y = 4; y < H; y += step) ctx.fillRect(x, y, 1.2, 1.2);
+
+      const sup = nodeOf('orchestrator');
+      for (const n of nodes) {
+        if (n === sup || !sup) continue;
+        const key = [n.role, 'orchestrator'].sort().join('>');
+        const heat = edgeHeat.get(key) || 0, hot = heat > 0.05;
+        const { cx, cy } = curve(n, sup);
+        ctx.beginPath(); ctx.moveTo(n.x, n.y); ctx.quadraticCurveTo(cx, cy, sup.x, sup.y);
+        ctx.setLineDash(hot ? [] : [3, 7]);
+        if (!hot) ctx.lineDashOffset = -now / 60;
+        const g = ctx.createLinearGradient(n.x, n.y, sup.x, sup.y);
+        g.addColorStop(0, n.info.color + (hot ? 'cc' : '44')); g.addColorStop(1, '#76b900' + (hot ? 'cc' : '44'));
+        ctx.strokeStyle = g; ctx.lineWidth = 1.2 + heat * 2.4; ctx.globalAlpha = n.available ? 1 : 0.3;
+        if (hot) { ctx.shadowColor = n.info.color; ctx.shadowBlur = 12 * heat; }
+        ctx.stroke(); ctx.shadowBlur = 0; ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.globalAlpha = 1;
+        if (heat > 0) edgeHeat.set(key, Math.max(0, heat - 0.005));
+      }
+
+      particles = particles.filter((p) => p.t < 1);
+      for (const p of particles) {
+        p.t += p.speed;
+        if (p.t < 0) continue;
+        const [x, y] = pointOn(p.a, p.b, p.t);
+        ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(x, y, Math.max(1, p.size), 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+
+      ripples = ripples.filter((r) => r.t < 1);
+      for (const r of ripples) {
+        r.t += 0.02;
+        ctx.strokeStyle = r.color; ctx.globalAlpha = 1 - r.t; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(r.n.x, r.n.y, r.n.r + 4 + r.t * r.n.r * 1.3, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      for (const n of nodes) drawNode(n, now);
+
+      const enabled = nodes.filter((n) => n.role !== 'client' && n.available).length;
+      const working = nodes.filter((n) => n.role !== 'client' && active.has(n.role)).length;
+      $('gm-active').textContent = `${enabled} active`;
+      $('gm-proc').textContent = `${working} processing`;
+      $('gm-idle').textContent = `${Math.max(0, enabled - working)} idle`;
+    }
+    tickGauge();
+    requestAnimationFrame(frame);
+  }
+
+  // "Now" bar ---------------------------------------------------------
+  let nowTimer = null;
+  function setNow(ev, role) {
+    const info = role ? ROLE_INFO[role] : null;
+    $('now-msg').innerHTML = `${info ? `<b style="color:${info.color}">${esc(info.short)}</b> · ` : ''}${esc(ev.message || ev.type)}`;
+    $('now-dot').className = 'dot pulse';
+    clearTimeout(nowTimer);
+    nowTimer = setTimeout(() => {
+      if (!anyRunning()) { $('now-dot').className = 'dot idle'; $('now-msg').textContent = 'Idle · waiting for the next request…'; }
+    }, 8000);
+  }
+
+  // ------------------------------------------------------------------
+  // Data: status, history, live stream
+  // ------------------------------------------------------------------
+  function setConn(ok) {
+    $('live-dot').className = 'dot ' + (ok ? 'pulse' : 'off');
+    $('live-text').textContent = ok ? 'Live' : 'Offline';
+    $('pill-live').className = 'pill ' + (ok ? 'ok' : 'bad');
+    $('sys-dot').className = 'dot ' + (ok ? 'pulse' : 'off');
+    $('sys-text').textContent = ok ? 'System Online' : 'Gateway offline';
+  }
+
+  async function loadStatus() {
+    try {
+      const res = await fetch(API + '/status'); if (!res.ok) throw new Error('HTTP ' + res.status);
+      const s = await res.json();
+      superModelId = s.orchestrator?.model || superModelId;
+      const fresh = (s.specialists || []).map((m) => ({ role: m.role, model: m.model, available: !!m.available }));
+      if (!fresh.some((m) => m.role === 'orchestrator')) fresh.unshift({ role: 'orchestrator', model: superModelId, available: !!s.orchestrator?.enabled });
+      const changed = JSON.stringify(fresh) !== JSON.stringify(models);
+      models = fresh;
+      if (changed) { layout(); renderModels(); }
+      const keyOk = !!s.orchestrator?.hasApiKey;
+      $('sys2-dot').className = 'dot ' + (keyOk ? '' : 'off');
+      $('sys2-text').textContent = keyOk ? 'All Nemotron systems operational' : 'No NVIDIA API key';
+      $('pill-sys').className = 'pill ' + (keyOk ? 'ok' : 'bad');
+      return true;
+    } catch {
+      setConn(false);
+      $('sys2-dot').className = 'dot off';
+      $('sys2-text').textContent = 'Gateway not reachable — run “Run Nemotron Gateway.bat”';
+      $('pill-sys').className = 'pill bad';
+      return false;
+    }
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch(API + '/events?limit=1000'); if (!res.ok) return;
+      const { events } = await res.json();
+      for (const ev of events || []) ingest(ev, false);
+      // Re-light nodes that are still working in a running turn.
+      for (const r of runs.values()) if (r.status === 'running') for (const ev of r.events) {
+        const role = roleForEvent(ev);
+        if (role && ev.type === 'agent_started') active.set(role, { since: Date.now(), count: 1 });
+        if (role && (ev.type === 'agent_completed' || ev.type === 'agent_failed')) active.delete(role);
+      }
+      scheduleChrome();
+    } catch { /* offline: the status pill already says so */ }
+  }
+
+  let es = null;
+  function connectStream() {
+    if (es) es.close();
+    es = new EventSource(API + '/stream-all');
+    es.onopen = () => setConn(true);
+    es.onmessage = (m) => { try { ingest(JSON.parse(m.data), true); } catch { /* bad frame */ } };
+    es.onerror = () => setConn(false);
+  }
+
+  // Test console ------------------------------------------------------
+  $('run-btn').onclick = async () => {
+    const input = $('test-input').value.trim(); if (!input) return;
+    const btn = $('run-btn'), out = $('answer');
+    btn.disabled = true; btn.textContent = '⏳ Orchestrating…';
+    out.style.display = 'none'; out.classList.remove('err');
+    try {
+      const res = await fetch(API + '/orchestrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userRequest: input }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+      out.textContent = data.finalAnswer || 'No answer returned.';
+    } catch (e) {
+      out.textContent = 'Error: ' + (e.message || 'orchestration failed'); out.classList.add('err');
+    } finally {
+      out.style.display = 'block'; btn.disabled = false; btn.textContent = '▶ Run orchestration';
+    }
+  };
+
+  document.querySelectorAll('.nav a').forEach((a) => a.addEventListener('click', () => {
+    document.querySelectorAll('.nav a').forEach((x) => x.classList.toggle('on', x === a));
+  }));
+
+  setInterval(() => {
+    $('clock').textContent = new Date().toLocaleTimeString([], { hour12: false });
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    $('sys-uptime').textContent = s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    drawSpark();
+    if (anyRunning()) renderRuns(); // keep running timers ticking
+  }, 1000);
+
+  // Boot -----------------------------------------------------------------
+  new ResizeObserver(() => layout()).observe(canvas);
+  (async () => {
+    await loadStatus();
+    layout();
+    await loadHistory();
+    connectStream();
+    requestAnimationFrame(frame);
+    setInterval(async () => {
+      const ok = await loadStatus();
+      if (ok && (!es || es.readyState === 2)) { await loadHistory(); connectStream(); }
+    }, 10000);
+  })();
+})();
+</script>
+</body>
+</html>
