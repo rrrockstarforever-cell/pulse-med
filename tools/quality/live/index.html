@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live test progress</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16202a; --muted:#5b6672; --line:#e2e6ea; --ok:#0f8b5f; --run:#c47a00; --bad:#c23b3b; --wait:#8a95a1; --accent:#0f8b8d; --track:#e9edf1; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1418; --card:#161d23; --text:#e7edf2; --muted:#98a4af; --line:#27323b; --ok:#3ecf9a; --run:#f0b04a; --bad:#ff7b7b; --wait:#6c7883; --accent:#3cc7c9; --track:#222c34; } }
+  :root[data-theme="dark"] { --bg:#0f1418; --card:#161d23; --text:#e7edf2; --muted:#98a4af; --line:#27323b; --ok:#3ecf9a; --run:#f0b04a; --bad:#ff7b7b; --wait:#6c7883; --accent:#3cc7c9; --track:#222c34; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  h1 { font-size:20px; margin:0; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); font-size:12px; color:var(--muted); }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--wait); }
+  .dot.live { background:var(--ok); animation:pulse 1.4s infinite; }
+  .dot.done { background:var(--accent); }
+  @keyframes pulse { 50% { opacity:.35; } }
+  .grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:14px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .stat b { display:block; font-size:24px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .bar { height:10px; border-radius:6px; background:var(--track); overflow:hidden; margin:6px 0 14px; }
+  .bar i { display:block; height:100%; background:var(--accent); transition:width .5s; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-bottom:14px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); }
+  th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  tr:last-child td { border-bottom:0; }
+  .tag { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; border:1px solid currentColor; }
+  .done { color:var(--ok); } .running { color:var(--run); } .waiting { color:var(--wait); } .error { color:var(--bad); }
+  .num { font-variant-numeric:tabular-nums; }
+  .warn { color:var(--bad); font-weight:600; }
+  pre { margin:0; padding:12px 14px; font:12px/1.5 ui-monospace,Consolas,monospace; color:var(--muted); white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; }
+  h2 { font-size:13px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:5px 10px; cursor:pointer; }
+  .note { color:var(--muted); font-size:12px; margin:6px 2px 0; }
+  @media (max-width:640px) { .hide-sm { display:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1 id="title">Live test progress</h1><div class="note" id="sub">Starting…</div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="pill"><span class="dot" id="dot"></span><span id="state">Waiting</span></span>
+      <button id="theme" type="button">Light / dark</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="stat"><b id="s-cases">–</b><span>cases finished</span></div>
+    <div class="stat"><b id="s-kept">–</b><span>questions kept</span></div>
+    <div class="stat"><b id="s-bad">–</b><span>wrong or ambiguous</span></div>
+    <div class="stat"><b id="s-time">–</b><span>since last log line</span></div>
+  </div>
+  <div class="bar"><i id="bar" style="width:0%"></i></div>
+
+  <div class="card">
+    <h2>Each test case</h2>
+    <table>
+      <thead><tr><th>Case</th><th>Status</th><th class="num">Kept</th><th class="num">Wrong</th><th class="num">Ambiguous</th><th class="num hide-sm">Low relevance</th><th class="num">Pictures</th><th class="num hide-sm">Time</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="note" id="imgnote"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Latest log lines</h2>
+    <pre id="tail"></pre>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (s) => s >= 3600 ? Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m' : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
+$('theme').onclick = () => {
+  const el = document.documentElement;
+  const dark = el.dataset.theme ? el.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  el.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('liveTheme', el.dataset.theme); } catch {}
+};
+try { const t = localStorage.getItem('liveTheme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+const label = { done:'Finished', running:'Running now', waiting:'Waiting', error:'Failed' };
+
+async function tick() {
+  try {
+    const d = await (await fetch('/status', { cache:'no-store' })).json();
+    document.title = d.title;
+    $('title').textContent = d.title;
+    const done = d.cases.filter((c) => c.state === 'done' || c.state === 'error').length;
+    $('s-cases').textContent = done + ' / ' + d.total;
+    $('s-kept').textContent = d.totals.kept + ' / ' + d.totals.target;
+    const bad = d.totals.wrong + d.totals.ambiguous;
+    $('s-bad').textContent = bad;
+    const idle = d.lastLogChange ? Math.round((d.now - d.lastLogChange) / 1000) : null;
+    $('s-time').textContent = idle === null ? '–' : fmt(idle);
+    $('bar').style.width = (d.total ? Math.round(done / d.total * 100) : 0) + '%';
+    const dot = $('dot');
+    if (d.finished) { dot.className = 'dot done'; $('state').textContent = 'Run finished'; }
+    else if (d.processAlive) { dot.className = 'dot live'; $('state').textContent = 'Running'; }
+    else { dot.className = 'dot'; $('state').textContent = 'Not running'; }
+    const p = d.process;
+    $('sub').textContent = p ? 'Model: ' + (p.provider || '?') + ' / ' + (p.model || 'default') + ' · ' + p.runs + ' run(s), up to ' + p.parallel + ' cases at a time · planning calls so far: ' + d.planCalls
+      : (d.finished ? d.finished : 'No test process found. Showing the log as it stands.');
+    $('rows').innerHTML = d.cases.map((c) => {
+      const has = c.state === 'done';
+      const pics = c.images === undefined ? (has ? 'at end of run' : '–') : (c.images + (c.dangling ? ' (' + c.dangling + ' missing)' : ''));
+      return '<tr><td>' + c.id + '</td>' +
+        '<td><span class="tag ' + c.state + '">' + label[c.state] + '</span></td>' +
+        '<td class="num">' + (has ? c.kept + ' / ' + c.target : (c.state === 'error' ? '–' : '–')) + '</td>' +
+        '<td class="num ' + (has && c.wrong ? 'warn' : '') + '">' + (has ? c.wrong : '–') + '</td>' +
+        '<td class="num ' + (has && c.ambiguous ? 'warn' : '') + '">' + (has ? c.ambiguous : '–') + '</td>' +
+        '<td class="num hide-sm">' + (has ? c.low : '–') + '</td>' +
+        '<td class="num">' + pics + '</td>' +
+        '<td class="num hide-sm">' + (has ? fmt(c.seconds) : (c.state === 'error' ? c.error : '–')) + '</td></tr>';
+    }).join('');
+    $('imgnote').textContent = d.cases.some((c) => c.images !== undefined) ? '' : 'Picture counts per case appear when the whole run ends (the test writes them to its result file then).';
+    const t = $('tail'); const atEnd = t.scrollTop + t.clientHeight >= t.scrollHeight - 20;
+    t.textContent = d.tail.join('\n'); if (atEnd) t.scrollTop = t.scrollHeight;
+  } catch (e) { $('sub').textContent = 'Cannot reach the progress server.'; $('dot').className = 'dot'; $('state').textContent = 'Offline'; }
+}
+tick(); setInterval(tick, 3000);
+</script>
+</body>
+</html>

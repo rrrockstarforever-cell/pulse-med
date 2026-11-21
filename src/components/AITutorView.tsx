@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useVoiceInput } from './useVoiceInput.ts';
+import { VoiceWave } from './VoiceWave.tsx';
 import { AppView, ClinicalQuestion, ExamType } from '../types.ts';
 import {
   getActiveProvider as getStoredActiveProvider,
@@ -326,9 +327,11 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
   const [phoneSettingsOpen, setPhoneSettingsOpen] = useState(false);
 
   // ----- chat state -----
-  const [input, setInput] = useState<string>('');
+  const [input, setInput] = useState<string>(() => {
+    try { return localStorage.getItem('pulse.aiTutor.draft.v1') || ''; } catch { return ''; }
+  });
   // Voice input: see useVoiceInput (records here, transcribes on this device with Whisper).
-  const { recording, status: voiceStatus, toggle: toggleVoice } = useVoiceInput((text) => {
+  const { recording, status: voiceStatus, partial: voicePartial, levels: voiceLevels, toggle: toggleVoice } = useVoiceInput((text) => {
     setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
   });
   // Waiting for a reply in the active conversation (kept in the store, so it survives navigation).
@@ -373,6 +376,13 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
     [conversations, activeId],
   );
+
+  useEffect(() => {
+    try {
+      if (input) localStorage.setItem('pulse.aiTutor.draft.v1', input);
+      else localStorage.removeItem('pulse.aiTutor.draft.v1');
+    } catch { /* storage unavailable */ }
+  }, [input]);
 
   const messages = activeConversation?.messages ?? [];
 
@@ -895,88 +905,6 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
             </button>
           </div>
 
-          <div className="flex flex-col xl:flex-row xl:items-center gap-3 max-md:gap-1">
-            <div className="flex items-center gap-2 flex-wrap max-md:flex-nowrap max-md:min-w-0 max-md:overflow-x-auto max-md:overscroll-x-contain max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
-              {/* Persona segmented */}
-              <div className="inline-flex shrink-0 rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70">
-                {PERSONAS.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setPersona(p.id)}
-                    title={p.hint}
-                    className={`px-2.5 py-1.5 rounded-[11px] text-[10px] font-medium transition-colors ${
-                      persona === p.id
-                        ? 'bg-[#001432] text-white dark:bg-teal-600'
-                        : 'text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Provider (only connected ones) */}
-              <div className="relative max-md:hidden">
-                <select
-                  value={provider ?? ''}
-                  onChange={(e) => handleProviderChange(e.target.value as AiProviderId)}
-                  className="appearance-none bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-[11px] font-semibold text-slate-800 dark:text-slate-100 rounded-[12px] pl-2.5 pr-7 py-2 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d] disabled:opacity-50"
-                  disabled={connectedCount === 0}
-                >
-                  {connectedCount === 0 && <option value="">No provider connected</option>}
-                  {connectedProviders.map((id) => (
-                    <option key={id} value={id}>{id}</option>
-                  ))}
-                </select>
-                <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-
-              {/* Model (editable, persisted per provider) */}
-              <input
-                value={model || (provider ? getEffectiveModel(provider) : '')}
-                onChange={(e) => handleModelChange(e.target.value)}
-                disabled={!provider}
-                list="tutor-model-options"
-                placeholder="model id"
-                title={model || (provider ? getEffectiveModel(provider) : '')}
-                className="w-56 max-md:hidden bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-[11px] font-mono text-slate-800 dark:text-slate-100 rounded-[12px] px-2 py-2 focus:outline-none focus:ring-2 focus:ring-[#0f8b8d] disabled:opacity-50 placeholder-slate-500"
-              />
-              <datalist id="tutor-model-options">
-                {provider && providerMap[provider]?.connected && (
-                  <option value={getEffectiveModel(provider)} />
-                )}
-              </datalist>
-            </div>
-
-            {/* Effort segmented (Min..Ultra), persisted */}
-            <div className="inline-flex max-md:hidden rounded-[14px] border border-slate-200 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-900/70 shrink-0" title="Reasoning effort (subscription providers)">
-              {EFFORT_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  onClick={() => handleEffortChange(level)}
-                  className={`px-2.5 py-1.5 rounded-[11px] text-[10px] font-medium transition-colors ${
-                    effort === level
-                      ? 'bg-[#001432] text-white dark:bg-teal-600'
-                      : 'text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
-                  }`}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-            <div className="hidden max-md:flex max-md:flex-col max-md:items-start">
-              <button type="button" onClick={() => setPhoneSettingsOpen((open) => !open)} aria-expanded={phoneSettingsOpen} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700">
-                <SlidersHorizontal className="h-3 w-3" /> {(provider || 'AI').toLowerCase()} - {effort}
-              </button>
-              {phoneSettingsOpen && <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                <select value={provider ?? ''} onChange={(e) => handleProviderChange(e.target.value as AiProviderId)} disabled={connectedCount === 0} className="max-w-32 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px]">
-                  {connectedCount === 0 && <option value="">No provider</option>}{connectedProviders.map((id) => <option key={id} value={id}>{id}</option>)}
-                </select>
-                <input value={model || (provider ? getEffectiveModel(provider) : '')} onChange={(e) => handleModelChange(e.target.value)} disabled={!provider} list="tutor-model-options" placeholder="model" className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px]" />
-                {EFFORT_LEVELS.map((level) => <button key={level} onClick={() => handleEffortChange(level)} className={`rounded-full px-2 py-1 text-[10px] ${effort === level ? 'bg-[#001432] text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>{level}</button>)}
-              </div>}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -1479,7 +1407,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
           )}
 
           {/* Sticky composer */}
-          <div className="sticky bottom-0 z-10 p-3 max-md:p-2 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-slate-100 bg-white flex items-end gap-2 rounded-b-2xl max-md:rounded-b-xl max-md:shrink-0">
+          <div className="sticky bottom-0 z-10 p-3 max-md:p-2 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-slate-100 bg-white flex items-end gap-2 max-md:flex-wrap rounded-b-2xl max-md:rounded-b-xl max-md:shrink-0">
             <button
               onClick={() => {
                 const next = !imageEnabled;
@@ -1549,7 +1477,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
                   : attachments.length > 0
                     ? `Ask about page ${attachments[0].pageNumber} of ${attachments[0].docTitle.slice(0, 40)}… (Enter to send)`
                     : contextQuestion ? 'Ask about the attached question… (Enter to send, Shift+Enter for a new line)' : 'Type a clinical question… (Enter to send, Shift+Enter for a new line)'}
-              className="flex-1 min-w-0 min-h-11 max-md:min-h-11 max-md:max-h-28 max-md:py-2 max-md:text-[14px] resize-none text-xs text-slate-900 px-3.5 py-2.5 rounded-[16px] bg-slate-50 border border-slate-200 focus:outline-none focus:border-[#0f8b8d]/60 focus:ring-4 focus:ring-[rgba(142,197,252,0.15)] placeholder-slate-400 dark:placeholder-[#8B8580]"
+              className="flex-1 min-w-0 min-h-11 max-md:order-first max-md:basis-full max-md:min-h-11 max-md:max-h-28 max-md:py-2 max-md:text-[14px] resize-none text-xs text-slate-900 px-3.5 py-2.5 rounded-[16px] bg-slate-50 border border-slate-200 focus:outline-none focus:border-[#0f8b8d]/60 focus:ring-4 focus:ring-[rgba(142,197,252,0.15)] placeholder-slate-400 dark:placeholder-[#8B8580]"
             />
             <button
               onClick={() => send(input)}
@@ -1560,6 +1488,7 @@ export const AITutorView: React.FC<AITutorViewProps> = ({ initialQuestionId, att
               Send
             </button>
           </div>
+          <VoiceWave levels={voiceLevels} partial={voicePartial} active={recording} />
           {voiceStatus && (
             <p className={`mt-1.5 text-[11px] ${recording ? 'text-rose-700' : 'text-slate-500'}`}>{voiceStatus}</p>
           )}

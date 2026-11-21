@@ -22,6 +22,7 @@ import {
   topicsForChapter,
 } from '../lib/pyqChapter.ts';
 import { generateExamQuestions } from '../lib/ai.ts';
+import { useBackLayer } from '../lib/backLayers.ts';
 import type { AppView, ClinicalQuestion, ExamType } from '../types.ts';
 
 interface Props {
@@ -133,6 +134,12 @@ export const PyqTopicsView: React.FC<Props> = ({ onNavigate, onLaunchQuestions, 
     setScreen('chapters');
     setChapter(null);
   }, []);
+
+  // Phone Back: chapter -> chapter list -> subject list.
+  useBackLayer(screen !== 'subjects' && !!subject, () => {
+    if (screen === 'chapter' && chapter) backToChapters();
+    else backToSubjects();
+  });
 
   /**
    * Writes the questions for this chapter and hands them to the existing runner.

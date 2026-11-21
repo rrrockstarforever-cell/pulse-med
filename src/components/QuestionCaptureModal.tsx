@@ -3,6 +3,7 @@
 // then "Structure with AI" turns the raw text into a real question. Everything is
 // editable before saving. Errors are shown; nothing is silently faked.
 import React, { useEffect, useRef, useState } from 'react';
+import { useBackLayer } from '../lib/backLayers.ts';
 import {
   ClipboardPaste, ImagePlus, Loader2, Sparkles, AlertCircle, CheckCircle2, X, ScanText, Save, Trash2,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ const EMPTY_DRAFT: StructuredDraft = {
 };
 
 export const QuestionCaptureModal: React.FC<QuestionCaptureModalProps> = ({ exam, onClose, onSaved }) => {
+  useBackLayer(true, onClose);
   const [image, setImage] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState('');
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -326,7 +328,7 @@ export const QuestionCaptureModal: React.FC<QuestionCaptureModalProps> = ({ exam
               <button
                 onClick={runOcr}
                 disabled={!image || ocrBusy}
-                className="flex-1 py-1.5 rounded-lg  text-white text-[10px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
+                className="flex-1 py-1.5 rounded-lg bg-[#001432] dark:bg-teal-700 text-white text-[10px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
               >
                 {ocrBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanText className="w-3 h-3 text-[#8ff3f4]" />}
                 {ocrBusy ? 'Recognising…' : 'Run OCR'}
@@ -334,7 +336,7 @@ export const QuestionCaptureModal: React.FC<QuestionCaptureModalProps> = ({ exam
               <button
                 onClick={structureWithAi}
                 disabled={!ocrText.trim() || structBusy}
-                className="flex-1 py-1.5 rounded-lg   text-white text-[10px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
+                className="flex-1 py-1.5 rounded-lg bg-[#0f8b8d] text-white text-[10px] font-medium disabled:opacity-40 flex items-center justify-center gap-1"
               >
                 {structBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                 Structure with AI
@@ -436,7 +438,7 @@ export const QuestionCaptureModal: React.FC<QuestionCaptureModalProps> = ({ exam
             <button
               onClick={save}
               disabled={!!savedId}
-              className="px-3 py-1.5 text-[11px] font-medium   text-white rounded-lg flex items-center gap-1.5 disabled:opacity-40"
+              className="px-3 py-1.5 text-[11px] font-medium bg-[#0f8b8d] text-white rounded-lg flex items-center gap-1.5 disabled:opacity-40"
             >
               <Save className="w-3.5 h-3.5 text-[#8ff3f4]" /> Save to notebook
             </button>

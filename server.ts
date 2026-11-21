@@ -220,6 +220,27 @@ app.use((req: Request, res: Response, next: () => void) => {
   });
 });
 
+const headerPinAttempts = new Map<string, { wrong: number; lockedUntil: number }>();
+
+app.use((req, res, next) => {
+  if (!PHONE_MODE) return next();
+  const origin = String(req.headers.origin || '');
+  if (origin !== 'http://localhost' && origin !== 'https://localhost' && origin !== 'capacitor://localhost') {
+    return next();
+  }
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  // Reflect the headers the page asks for (the app sends x-session-id and others); the origin is already limited above.
+  res.setHeader('Access-Control-Allow-Headers', String(req.headers['access-control-request-headers'] || 'Content-Type, X-Pulse-Pin, Authorization, x-session-id'));
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 // Only this computer may talk to the server by default. In phone mode, a non-local Host is allowed only after a
 // valid PIN cookie (or when the request itself comes from loopback), so the AI keys stay behind the PIN gate.
 app.use((req: Request, res: Response, next: () => void) => {
@@ -230,7 +251,37 @@ app.use((req: Request, res: Response, next: () => void) => {
     return;
   }
   if (isLoopbackRequest(req)) return next();
-  if (constantTimeEqual(readCookie(req, PIN_COOKIE_NAME), PIN_COOKIE_VALUE)) return next();
+  const headerPin = String(req.headers['x-pulse-pin'] || '');
+  const remoteAddress = req.socket.remoteAddress || '';
+  const now = Date.now();
+  const attempt = headerPinAttempts.get(remoteAddress);
+  
+  if (constantTimeEqual(readCookie(req, PIN_COOKIE_NAME), PIN_COOKIE_VALUE)) {
+    headerPinAttempts.delete(remoteAddress);
+    return next();
+  }
+  
+  if (headerPin.length > 0) {
+    if (attempt && attempt.lockedUntil > now) {
+      res.setHeader('Retry-After', String(Math.ceil((attempt.lockedUntil - now) / 1000)));
+      res.status(429).json({ error: 'Too many attempts.' });
+      return;
+    }
+  
+    if (constantTimeEqual(headerPin, REMOTE_PIN)) {
+      headerPinAttempts.delete(remoteAddress);
+      return next();
+    }
+  
+    const wrong = (attempt?.wrong || 0) + 1;
+    if (wrong >= 5) {
+      headerPinAttempts.set(remoteAddress, { wrong, lockedUntil: now + 60_000 });
+      res.setHeader('Retry-After', '60');
+      res.status(429).json({ error: 'Too many attempts.' });
+      return;
+    }
+    headerPinAttempts.set(remoteAddress, { wrong, lockedUntil: 0 });
+  }
   if (isApiPath(req.path)) {
     res.status(401).json({ error: 'PIN required.' });
     return;
@@ -2905,6 +2956,12 @@ app.post('/api/debug/log', (req: Request, res: Response) => {
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
 
+  // An unknown /api path must answer with a JSON 404. Falling through to the web page would send HTML with status 200
+  // to code that expects JSON, which shows up as confusing "unexpected response" errors.
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({ error: 'Unknown API route' });
+  });
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -2924,6 +2981,13 @@ async function startServer() {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   }
+
+  // Errors on /api (a bad JSON body, a body that is too large) answer in JSON, not with an HTML error page.
+  app.use((err: any, req: Request, res: Response, next: (e?: unknown) => void) => {
+    if (!req.path.startsWith('/api') || res.headersSent) return next(err);
+    const status = Number(err?.status || err?.statusCode) || 500;
+    res.status(status).json({ error: err?.type === 'entity.parse.failed' ? 'Invalid JSON in the request body' : (status < 500 ? String(err?.message || 'Bad request') : 'Server error') });
+  });
 
   // In phone mode, listen on all IPv4 interfaces so the phone can reach the PC over Wi-Fi, plus IPv6 loopback.
   // Otherwise keep the original loopback-only behaviour. HOST can still override the non-phone listener.

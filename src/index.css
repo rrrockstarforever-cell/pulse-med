@@ -817,11 +817,11 @@
 
 /* Page changes: the new page eases in. Nothing moves for people who ask their system for reduced motion. */
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(14px) scale(0.992); filter: blur(3px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
 }
 /* "backwards", not "both": once the animation ends the element keeps no transform, so a fixed-position dialog inside it is not clipped to the page. */
-.page-enter { animation: page-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+.page-enter { animation: page-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 @media (prefers-reduced-motion: reduce) {
   .page-enter { animation: none; }
   .mobile-drawer-panel,
@@ -829,3 +829,144 @@
     transition: none !important;
   }
 }
+
+
+/* Phone polish (2026-11-20): one icon size system and touch-friendly controls. Icons inside text buttons are 16px, icon-only buttons 20px; the header menu button is 44px. */
+@media (max-width: 767px) {
+  :is(
+    main button svg,
+    main a svg,
+    main [role="button"] svg,
+    header button svg
+  ):not([class*="w-6"]):not([class*="w-7"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-1"]):not([class*="size-6"]):not([class*="size-8"]):not([width="32"]):not([height="32"]):not([width="36"]):not([height="36"]):not([width="64"]):not([height="64"]):not([width="68"]):not([height="68"]):not([role="progressbar"]):not([class*="ring"]):not([class*="recharts"]):not(.recharts-wrapper *):not(nav[aria-label="Phone navigation"] *):not([aria-label="Navigation menu"] *) {
+    width: 16px !important;
+    height: 16px !important;
+    flex-shrink: 0 !important;
+  }
+  header button:has(> svg:only-child) {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  header button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  main :is(button, a[role="button"], select, [role="tab"]):not(table button) {
+    min-height: 40px;
+  }
+
+  main button:not([class*="whitespace-nowrap"]) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+  }
+
+  main p,
+  main span,
+  main label {
+    overflow-wrap: anywhere;
+  }
+
+  main .text-\[10px\] {
+    font-size: 11px !important;
+  }
+
+  main .text-\[9px\] {
+    font-size: 11px !important;
+  }
+}
+
+
+/* Speed and smoothness (2026-11-20) */
+/* Improve touch responsiveness and remove tap highlight */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+html,
+button,
+a,
+[role="button"],
+select,
+input,
+textarea,
+summary {
+  touch-action: manipulation;
+}
+
+/* Add press feedback on coarse pointer devices */
+@media (hover: none) and (pointer: coarse) {
+  main button:not(:disabled),
+  main [role="button"],
+  nav button {
+    transition: transform 100ms ease-out, background-color 150ms ease-out;
+  }
+  main button:not(:disabled):active,
+  main [role="button"]:active,
+  nav button:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Utility for content visibility optimization */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+
+/* Disable backdrop blur on small screens to reduce scroll cost */
+@media (max-width: 767px) {
+  .backdrop-blur,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Contain vertical overscroll within main content */
+main {
+  overscroll-behavior-y: contain;
+}
+
+
+/* Radio and checkbox dots stay their own size (the label around them is the touch target); radio labels never wrap letter by letter. */
+@media (max-width: 767px) {
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    flex-shrink: 0;
+  }
+  label:has(input[type="radio"]) { white-space: nowrap; }
+  label:has(input[type="radio"]) * { white-space: nowrap !important; overflow-wrap: normal !important; }
+}
+
+
+/* Explanation sheet: slides up when opened and down when closed (phones). */
+@media (max-width: 767px) {
+  @keyframes pm-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes pm-sheet-out { from { transform: translateY(var(--pm-from, 0px)); } to { transform: translateY(105%); } }
+  .pm-sheet-in { animation: pm-sheet-in 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards; will-change: transform; }
+  /* Starts fast (like the finger that threw it) and eases to a stop off-screen: no pause between the drag and the close. */
+  .pm-sheet-out { animation: pm-sheet-out 220ms cubic-bezier(0.2, 0.75, 0.35, 1) forwards; will-change: transform; }
+}
+
+/* Phone contents list: plain book-style lines. The global 36-44px minimum heights on buttons would make each line a big box. */
+.toc-bare { min-height: 0 !important; min-width: 0 !important; padding: 2px 3px !important; }
+.toc-sum { min-height: 0 !important; }
+.toc-actions button { min-height: 0 !important; min-width: 0 !important; }

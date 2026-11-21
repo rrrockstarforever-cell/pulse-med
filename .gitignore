@@ -20,3 +20,16 @@ build/library/
 # quality test output
 tools/quality/out/
 quality-plans.json
+
+# local scratch, device builds and QA output
+.scratch/
+.play/
+.claude/
+android-build/
+exports/
+sub1_*
+round2.md
+chapter-mcq-round6-questions.md
+tools/phone-qa/results/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor*.json

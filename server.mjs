@@ -35,6 +35,45 @@ function scopeInstruction() {
 }
 
 // src/lib/pipelines/shared.ts
+var LONG_PARENTHETICAL = /\(([^)]*\s){3,}[^)]*\)/;
+function asksAboutStatements(q) {
+  const line = `${q.questionText ?? ""} ${q.stem ?? ""}`;
+  return /\b(NOT|EXCEPT|FALSE|INCORRECT|UNTRUE|true|correct statement|statements?|assertion)\b/i.test(line);
+}
+function cleanOptionLabels(q) {
+  if (asksAboutStatements(q)) return 0;
+  let cleaned = 0;
+  for (const o of q.options ?? []) {
+    let text = String(o.text ?? "");
+    const before = text;
+    text = text.replace(LONG_PARENTHETICAL, "").trim();
+    const cut = text.search(/\s*(?:[,;:—–-]\s*|\s)(?:because|since|due to|owing to|as it|as this|as they|which (?:is why|explains)|therefore|hence|thus|so that|e\.g\.|i\.e\.|resulting in|leading to)\b/i);
+    if (cut > 0) text = text.slice(0, cut).trim();
+    text = text.replace(/[\s,;:—–-]+$/, "").trim();
+    if (text !== before && text.split(/\s+/).filter(Boolean).length >= 1 && text.length >= 2) {
+      o.text = text;
+      cleaned += 1;
+    }
+  }
+  return cleaned;
+}
+function splitStemQuestion(q) {
+  const stem = String(q.stem ?? "").trim();
+  const line = String(q.questionText ?? "").trim();
+  if (!/\?\s*$/.test(stem)) return;
+  const masked = stem.replace(/\b([A-Za-z]|e\.g|i\.e|vs|Dr|Mr|Mrs|No|St|Fig|approx)\./g, "$1\0");
+  const mm = masked.match(/^(.*?[.!])\s+([^.!?]*\?)\s*$/s);
+  const m = mm ? [mm[0], mm[1].replace(/\u0000/g, "."), mm[2].replace(/\u0000/g, ".")] : null;
+  if (!m || m[1].trim().split(/\s+/).length < 6) return;
+  const norm2 = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!line || norm2(line) === norm2(stem) || norm2(line) === norm2(m[2])) {
+    q.stem = m[1].trim();
+    q.questionText = m[2].trim();
+  }
+}
+function hasAboveOption(q) {
+  return (q.options ?? []).some((o) => /\b(all|none) of the above\b|\bboth [a-e] (and|&) [a-e]\b|\ball of these\b|\bnone of these\b/i.test(String(o.text ?? "")));
+}
 var RELEVANCE_STOP = /* @__PURE__ */ new Set(["which", "their", "there", "about", "after", "before", "drugs", "agents", "effects", "effect", "adverse", "treatment", "therapy", "management", "clinical", "features", "patient", "patients", "disease", "diseases", "causes", "caused", "common", "commonly", "important", "standard", "between", "within", "without", "during", "mechanism", "mechanisms", "action", "used", "using", "first", "second", "third"]);
 function passageMatchesQuery(text, query) {
   const terms = [...new Set(String(query).toLowerCase().match(/[a-z][a-z0-9-]{4,}/g) ?? [])].filter((w) => !RELEVANCE_STOP.has(w)).map((w) => w.slice(0, 6));
@@ -597,16 +636,29 @@ function searchLibrary(query, subject = "", limit = 2, excerptChars = 700) {
   const terms = [...new Set(String(query || "").toLowerCase().match(/[a-z][a-z-]{3,}/g) || [])].filter((t) => !STOP.has(t));
   if (!terms.length) return [];
   const subjects = librarySubjects(subject);
-  const subjectSql = subjects.length ? ` AND b.subject IN (${subjects.map(() => "?").join(",")})` : "";
-  const select = `SELECT b.id AS book_id, b.title AS title, p.page_no AS page_no, p.text AS text, bm25(pages_fts) AS rank
+  const marks = subjects.map(() => "?").join(",");
+  const selectFor = (subjectSql) => `SELECT b.id AS book_id, b.title AS title, p.page_no AS page_no, p.text AS text, bm25(pages_fts) AS rank
     FROM pages_fts JOIN pages p ON p.id = pages_fts.rowid JOIN books b ON b.id = p.book_id
     WHERE pages_fts MATCH ?${subjectSql} ORDER BY rank LIMIT ?`;
   const attempts = [terms.map((t) => `"${t}"`).join(" AND ")];
   if (terms.length > 1) attempts.push(terms.map((t) => `"${t}"`).join(" OR "));
-  let rows = [];
-  for (const match of attempts) {
-    rows = database.prepare(select).all(match, ...subjects, limit);
-    if (rows.length) break;
+  const runWith = (sql, args, n) => {
+    for (const match of attempts) {
+      const found = database.prepare(selectFor(sql)).all(match, ...args, n);
+      if (found.length) return found;
+    }
+    return [];
+  };
+  let rows;
+  if (subjects.length && limit < 5) {
+    rows = runWith(` AND b.subject IN (${marks})`, subjects, limit);
+  } else if (subjects.length) {
+    const own = runWith(` AND b.subject IN (${marks})`, subjects, limit);
+    const other = runWith(` AND b.subject NOT IN (${marks})`, subjects, limit);
+    const nOwn = Math.min(own.length, Math.max(limit - other.length, Math.ceil(limit / 2)));
+    rows = [...own.slice(0, nOwn), ...other.slice(0, limit - nOwn)];
+  } else {
+    rows = runWith("", [], limit);
   }
   return rows.map((r) => {
     const lower = String(r.text).toLowerCase();
@@ -779,12 +831,348 @@ function passagesCoverQuestion(texts, questionOrTerms) {
   return (texts || []).some((text) => termHits(text, distinctive) >= need);
 }
 
+// server/guidelineSources.mjs
+var SUBJECT_OFFICIAL_SOURCES = [
+  [/forensic|toxicolog|preventive|social|community|\bpsm\b/i, ["ncvbdc.mohfw.gov.in", "dghs.mohfw.gov.in", "tbcindia.mohfw.gov.in", "mohfw.gov.in", "nhm.gov.in", "ncdc.gov.in", "ncrb.gov.in", "nha.gov.in", "nmc.org.in", "indiacode.nic.in", "nhp.gov.in", "icmr.gov.in", "naco.gov.in", "fssai.gov.in", "who.int", "rchiips.org", "unicef.org"]],
+  [/surg|orthop|trauma|burn/i, ["facs.org", "ameriburn.org", "thyroid.org", "nccn.org", "fascrs.org", "vascular.org", "auanet.org", "aofoundation.org", "americanherniasociety.org", "ota.org"]],
+  [/obstet|gynae|gynec|pediatric|paediatric|neonat/i, ["dghs.mohfw.gov.in", "fogsi.org", "iapindia.org", "nnfi.org", "mohfw.gov.in", "nhm.gov.in", "wcd.nic.in", "who.int", "unicef.org", "figo.org", "rcog.org.uk", "acog.org", "aap.org", "nice.org.uk"]],
+  [/ophthalm|\bENT\b|oto-?rhino|otolaryng|eye/i, ["aios.org", "mohfw.gov.in", "aoiindia.org", "nhp.gov.in", "aao.org", "icoph.org", "entnet.org", "who.int", "nih.gov", "cochranelibrary.com"]],
+  [/dermat|venereol|leprosy|psychiatr|anesth|anaesth|radio/i, ["dghs.mohfw.gov.in", "iadvl.org", "nlep.nic.in", "naco.gov.in", "mohfw.gov.in", "indianpsychiatricsociety.org", "iria.org.in", "aerb.gov.in", "nimhans.ac.in", "ijaweb.org", "who.int", "psychiatry.org", "asahq.org", "das.uk.com", "acr.org"]],
+  [/medicine|cardio|nephro|endocrin|neuro|respirat|gastro|haemat|hemat|infect|critical/i, ["ncvbdc.mohfw.gov.in", "ncdc.mohfw.gov.in", "tbcindia.mohfw.gov.in", "heart.org", "acc.org", "icmr.gov.in", "tbcindia.gov.in", "naco.gov.in", "mohfw.gov.in", "who.int", "escardio.org", "kdigo.org", "diabetes.org", "ginasthma.org", "goldcopd.org", "idsociety.org", "sccm.org", "rheumatology.org", "aasld.org", "hematology.org", "eso-stroke.org"]],
+  [/pharmacolog/i, ["dghs.mohfw.gov.in", "tbcindia.mohfw.gov.in", "cdsco.gov.in", "ipc.gov.in", "mohfw.gov.in", "naco.gov.in", "icmr.gov.in", "nhm.gov.in", "who.int", "nice.org.uk", "fda.gov", "medlineplus.gov", "msdmanuals.com", "cochranelibrary.com"]],
+  [/patholog|microbiolog/i, ["ncdc.mohfw.gov.in", "icmr.gov.in", "ncdc.gov.in", "who.int", "cdc.gov", "idsociety.org", "clsi.org", "eucast.org", "hematology.org", "cap.org", "aaaai.org", "asm.org"]],
+  [/physiolog|biochem/i, ["who.int", "nice.org.uk", "ifcc.org", "diabetes.org", "endocrine.org", "mayocliniclabs.com", "nih.gov", "medlineplus.gov", "omim.org"]],
+  [/anatom|embryolog|histolog/i, ["nih.gov", "genome.gov", "omim.org", "medlineplus.gov", "anatomy.org", "radiopaedia.org"]]
+];
+var GENERAL_OFFICIAL = ["who.int", "mohfw.gov.in", "icmr.gov.in", "nice.org.uk", "cdc.gov", "nih.gov", "dghs.mohfw.gov.in"];
+var OFFICIAL_HOST_PATTERN = new RegExp("(" + ["ncvbdc.mohfw.gov.in", "dghs.mohfw.gov.in", "tbcindia.mohfw.gov.in", "mohfw.gov.in", "nhm.gov.in", "ncdc.gov.in", "ncrb.gov.in", "nha.gov.in", "nmc.org.in", "indiacode.nic.in", "nhp.gov.in", "icmr.gov.in", "naco.gov.in", "fssai.gov.in", "who.int", "rchiips.org", "unicef.org", "facs.org", "ameriburn.org", "thyroid.org", "nccn.org", "fascrs.org", "vascular.org", "auanet.org", "aofoundation.org", "americanherniasociety.org", "ota.org", "fogsi.org", "iapindia.org", "nnfi.org", "wcd.nic.in", "figo.org", "rcog.org.uk", "acog.org", "aap.org", "nice.org.uk", "aios.org", "aoiindia.org", "aao.org", "icoph.org", "entnet.org", "nih.gov", "cochranelibrary.com", "iadvl.org", "nlep.nic.in", "indianpsychiatricsociety.org", "iria.org.in", "aerb.gov.in", "nimhans.ac.in", "ijaweb.org", "psychiatry.org", "asahq.org", "das.uk.com", "acr.org", "ncdc.mohfw.gov.in", "heart.org", "acc.org", "tbcindia.gov.in", "escardio.org", "kdigo.org", "diabetes.org", "ginasthma.org", "goldcopd.org", "idsociety.org", "sccm.org", "rheumatology.org", "aasld.org", "hematology.org", "eso-stroke.org", "cdsco.gov.in", "ipc.gov.in", "fda.gov", "medlineplus.gov", "msdmanuals.com", "cdc.gov", "clsi.org", "eucast.org", "cap.org", "aaaai.org", "asm.org", "ifcc.org", "endocrine.org", "mayocliniclabs.com", "omim.org", "genome.gov", "anatomy.org", "radiopaedia.org"].map((d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")$", "i");
+function officialDomainsFor(subject) {
+  const s = String(subject || "");
+  const hit = SUBJECT_OFFICIAL_SOURCES.find(([re]) => re.test(s));
+  return hit ? hit[1] : GENERAL_OFFICIAL;
+}
+function isOfficialHost(url) {
+  try {
+    return OFFICIAL_HOST_PATTERN.test(new URL(url).hostname.replace(/^www\./, ""));
+  } catch {
+    return false;
+  }
+}
+
+// server/keylessSources.mjs
+var decode = (s) => s.replace(/<[^>]*>/g, "").replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e]);
+async function pubmedSearch(query, net2) {
+  net2.attempts = (net2.attempts || 0) + 1;
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=3&sort=relevance&term=${encodeURIComponent(query)}`;
+  const esearchRes = await fetch(esearchUrl, { signal: AbortSignal.timeout(15e3) });
+  if (esearchRes.status !== 200) throw new Error(`HTTP ${esearchRes.status}`);
+  net2.ok = (net2.ok || 0) + 1;
+  const esearchJson = await esearchRes.json();
+  const ids = esearchJson && esearchJson.esearchresult && Array.isArray(esearchJson.esearchresult.idlist) ? esearchJson.esearchresult.idlist : [];
+  if (ids.length === 0) return [];
+  net2.attempts = (net2.attempts || 0) + 1;
+  const efetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&rettype=abstract&id=${ids.join(",")}`;
+  const efetchRes = await fetch(efetchUrl, { signal: AbortSignal.timeout(15e3) });
+  if (efetchRes.status !== 200) throw new Error(`HTTP ${efetchRes.status}`);
+  net2.ok = (net2.ok || 0) + 1;
+  const xml = await efetchRes.text();
+  const articles = [];
+  const articleRe = /<PubmedArticle(?:\s[^>]*)?>([\s\S]*?)<\/PubmedArticle>/g;
+  let match;
+  while ((match = articleRe.exec(xml)) && articles.length < 3) {
+    const block = match[1];
+    const pmidMatch = block.match(/<PMID\b[^>]*>\s*(\d+)\s*<\/PMID>/);
+    const pmid = pmidMatch ? pmidMatch[1] : "";
+    const titleMatch = block.match(/<ArticleTitle\b[^>]*>([\s\S]*?)<\/ArticleTitle>/);
+    const title = titleMatch ? decode(titleMatch[1]).trim() : "";
+    const abstractRe = /<AbstractText\b([^>]*)>([\s\S]*?)<\/AbstractText>/g;
+    const pieces = [];
+    let abstractMatch;
+    while (abstractMatch = abstractRe.exec(block)) {
+      const attrs = abstractMatch[1];
+      const labelMatch = attrs.match(/\bLabel\s*=\s*"([^"]*)"/);
+      let piece = decode(abstractMatch[2]).trim();
+      if (labelMatch && labelMatch[1]) piece = decode(labelMatch[1]).trim() + ": " + piece;
+      if (piece) pieces.push(piece);
+    }
+    const abstract = pieces.join(" ").trim();
+    if (!title && !abstract) continue;
+    const url = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+    articles.push({ title, url, text: abstract.slice(0, 3e3) });
+  }
+  return articles;
+}
+async function openAlexSearch(query, net2) {
+  net2.attempts = (net2.attempts || 0) + 1;
+  const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=5&select=title,doi,id,publication_year,primary_location,abstract_inverted_index`;
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (response.status !== 200) {
+    throw new Error(`OpenAlex request failed with status ${response.status}`);
+  }
+  net2.ok = (net2.ok || 0) + 1;
+  const data = await response.json();
+  const out = [];
+  for (const result of data.results || []) {
+    const invertedIndex = result.abstract_inverted_index;
+    if (!invertedIndex) continue;
+    const positionedWords = [];
+    for (const [word, positions] of Object.entries(invertedIndex)) {
+      if (!Array.isArray(positions)) continue;
+      for (const position of positions) {
+        positionedWords.push([position, word]);
+      }
+    }
+    positionedWords.sort((a, b) => a[0] - b[0]);
+    const abstract = positionedWords.map(([, word]) => word).join(" ");
+    if (!abstract) continue;
+    out.push({
+      title: result.title,
+      url: result.doi || result.id,
+      text: abstract.slice(0, 2500)
+    });
+    if (out.length === 3) break;
+  }
+  return out;
+}
+async function crossrefSearch(query, net2) {
+  net2.attempts = (net2.attempts || 0) + 1;
+  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=5&select=title,DOI,container-title,issued,URL,abstract`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(15e3) });
+  if (!response.ok) {
+    throw new Error(`Crossref request failed with status ${response.status}`);
+  }
+  net2.ok = (net2.ok || 0) + 1;
+  const data = await response.json();
+  const items = data?.message?.items ?? [];
+  const results = [];
+  const cleanAbstract = (abstract) => abstract.replace(/<[^>]*>/g, " ").replace(/&(amp|lt|gt|quot);/g, (_, entity) => ({
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"'
+  })[entity]).replace(/\s+/g, " ").trim();
+  for (const item of items) {
+    const title = item?.title?.[0];
+    if (!title) continue;
+    const journal = item["container-title"]?.[0] || "";
+    const year = item.issued?.["date-parts"]?.[0]?.[0] || "";
+    const text = item.abstract ? cleanAbstract(item.abstract).slice(0, 2500) : `${journal} (${year})`;
+    const itemUrl = item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : "");
+    results.push({ title, url: itemUrl, text });
+    if (results.length === 3) break;
+  }
+  return results;
+}
+async function wikipediaSearch(query, net2 = {}) {
+  if (query == null || query === "") return [];
+  net2.attempts = (net2.attempts || 0) + 1;
+  const url = "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=" + encodeURIComponent(query) + "&gsrlimit=2&prop=extracts|info&exintro=1&explaintext=1&exchars=1500&inprop=url";
+  const res = await fetch(url, {
+    headers: { "User-Agent": "PulseMedStudy/1.0 (study tool)" },
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (res.status !== 200) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  net2.ok = (net2.ok || 0) + 1;
+  const data = await res.json();
+  if (!data.query || !data.query.pages) return [];
+  return Object.values(data.query.pages).sort((a, b) => a.index - b.index).filter((page) => typeof page.extract === "string" && page.extract.trim() !== "").slice(0, 2).map((page) => ({
+    title: page.title,
+    url: page.fullurl,
+    text: page.extract.trim().slice(0, 1500)
+  }));
+}
+async function medlinePlusSearch(query, net2) {
+  net2.attempts = (net2.attempts || 0) + 1;
+  const url = `https://wsearch.nlm.nih.gov/ws/query?db=healthTopics&retmax=2&term=${encodeURIComponent(query)}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(15e3) });
+  if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+  const xml = await response.text();
+  net2.ok = (net2.ok || 0) + 1;
+  const decodeXml = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const stripTags = (s) => s.replace(/<[^>]*>/g, "");
+  const results = [];
+  const docRe = /<document\b([^>]*)>([\s\S]*?)<\/document>/g;
+  let match;
+  while ((match = docRe.exec(xml)) && results.length < 2) {
+    const attrs = match[1];
+    const body = match[2];
+    const urlMatch = attrs.match(/\burl="([^"]*)"/);
+    const docUrl = urlMatch ? urlMatch[1] : "";
+    const titleMatch = body.match(
+      /<content\b[^>]*\bname="title"[^>]*>([\s\S]*?)<\/content>/
+    );
+    const summaryMatch = body.match(
+      /<content\b[^>]*\bname="FullSummary"[^>]*>([\s\S]*?)<\/content>/
+    );
+    if (!titleMatch || !summaryMatch) continue;
+    const title = stripTags(decodeXml(titleMatch[1])).trim();
+    let summary = decodeXml(summaryMatch[1]);
+    summary = summary.replace(/<\/p>|<\/li>/gi, "\n");
+    summary = stripTags(summary);
+    summary = summary.replace(/\r\n?/g, "\n");
+    summary = summary.replace(/\n\s*\n+/g, "\n").trim();
+    if (!title || !summary) continue;
+    results.push({
+      title,
+      url: docUrl,
+      text: summary.slice(0, 2500)
+    });
+  }
+  return results;
+}
+var cache = /* @__PURE__ */ new Map();
+var inFlight = /* @__PURE__ */ new Map();
+function normUrl(url) {
+  return String(url ?? "").trim().toLowerCase().replace(/\/+$/, "");
+}
+function normTitle(title) {
+  return String(title ?? "").trim().toLowerCase();
+}
+function errText(err) {
+  return err && typeof err === "object" && "message" in err ? String(err.message) : String(err);
+}
+async function cached(key, ttlMs, fn) {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.time < ttlMs) return hit.value;
+  if (inFlight.has(key)) return inFlight.get(key);
+  const promise = Promise.resolve().then(() => fn()).then((value) => {
+    const shouldCache = Array.isArray(value) ? value.length > 0 : value && Array.isArray(value.sources) && value.sources.length > 0;
+    if (shouldCache) {
+      if (cache.has(key)) cache.delete(key);
+      if (cache.size >= 300) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey !== void 0) cache.delete(oldestKey);
+      }
+      cache.set(key, { value, time: Date.now() });
+    }
+    return value;
+  }).finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
+}
+async function keylessPapers(query, net2, want = 3) {
+  const engines = [];
+  const sources = [];
+  try {
+    const target = Number.isFinite(want) ? Math.max(0, Math.floor(want)) : 0;
+    if (target === 0) return { sources, engines };
+    const seenUrls = /* @__PURE__ */ new Set();
+    const seenTitles = /* @__PURE__ */ new Set();
+    const adapters = [
+      { name: "pubmed", fn: pubmedSearch },
+      { name: "openalex", fn: openAlexSearch },
+      { name: "crossref", fn: crossrefSearch }
+    ];
+    for (const { name, fn } of adapters) {
+      if (sources.length >= target) break;
+      const record = { name, ok: true, count: 0 };
+      try {
+        const items = await fn(query, net2);
+        const arr = Array.isArray(items) ? items : [];
+        record.count = arr.length;
+        for (const item of arr) {
+          if (sources.length >= target) break;
+          if (!item || typeof item !== "object") continue;
+          if (String(item.text || "").length < 100) continue;
+          const urlKey = normUrl(item.url);
+          const titleKey = normTitle(item.title);
+          if (urlKey && seenUrls.has(urlKey)) continue;
+          if (titleKey && seenTitles.has(titleKey)) continue;
+          if (urlKey) seenUrls.add(urlKey);
+          if (titleKey) seenTitles.add(titleKey);
+          sources.push({ title: item.title, url: item.url, text: item.text });
+        }
+        engines.push(record);
+      } catch (err) {
+        record.ok = false;
+        record.count = 0;
+        record.error = errText(err);
+        engines.push(record);
+      }
+    }
+    return { sources, engines };
+  } catch (err) {
+    return { sources, engines };
+  }
+}
+async function keylessPages(query, net2) {
+  const engines = [];
+  const sources = [];
+  try {
+    let addItems = function(items) {
+      const arr = Array.isArray(items) ? items : [];
+      for (const item of arr) {
+        if (!item || typeof item !== "object") continue;
+        const urlKey = normUrl(item.url);
+        if (urlKey && seenUrls.has(urlKey)) continue;
+        if (urlKey) seenUrls.add(urlKey);
+        sources.push({ title: item.title, url: item.url, text: item.text });
+      }
+    };
+    const [medlineResult, wikiResult] = await Promise.allSettled([
+      medlinePlusSearch(query, net2),
+      wikipediaSearch(query, net2)
+    ]);
+    const seenUrls = /* @__PURE__ */ new Set();
+    if (medlineResult.status === "fulfilled") {
+      const arr = Array.isArray(medlineResult.value) ? medlineResult.value : [];
+      engines.push({ name: "medlineplus", ok: true, count: arr.length });
+      addItems(arr);
+    } else {
+      engines.push({
+        name: "medlineplus",
+        ok: false,
+        count: 0,
+        error: errText(medlineResult.reason)
+      });
+    }
+    if (wikiResult.status === "fulfilled") {
+      const arr = Array.isArray(wikiResult.value) ? wikiResult.value : [];
+      engines.push({ name: "wikipedia", ok: true, count: arr.length });
+      addItems(arr);
+    } else {
+      engines.push({
+        name: "wikipedia",
+        ok: false,
+        count: 0,
+        error: errText(wikiResult.reason)
+      });
+    }
+    return { sources, engines };
+  } catch (err) {
+    return { sources, engines };
+  }
+}
+
 // server/web.mjs
 var UA = "Mozilla/5.0 (X11; Linux x86_64) PulseMed/0.2 (study tool)";
 var TRUSTED = /(nih\.gov|ncbi\.nlm|who\.int|cdc\.gov|nice\.org\.uk|medlineplus|mayoclinic|msdmanuals|statpearls|radiopaedia|cochrane|bmj\.com|thelancet|nejm|jamanetwork|icmr|mohfw|aiims)/i;
 var ents = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&#x27;": "'", "&nbsp;": " " };
-var decode = (s) => s.replace(/&(amp|lt|gt|quot|nbsp|#39|#x27);/g, (m) => ents[m] ?? m);
-var strip = (h) => decode(h.replace(/<(script|style|nav|header|footer|aside|svg|noscript|form)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+var decode2 = (s) => s.replace(/&(amp|lt|gt|quot|nbsp|#39|#x27);/g, (m) => ents[m] ?? m);
+var strip = (h) => decode2(h.replace(/<(script|style|nav|header|footer|aside|svg|noscript|form)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+var flattenTable = (t) => {
+  const cleanCell = (html) => html.replace(/<br\s*\/?>/gi, " ").replace(/<\/(?:p|div|li|span|a|b|strong|em|caption|h[1-6])>/gi, " ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const rows = [];
+  t.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi, (_, row) => {
+    const cells = [];
+    row.replace(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]\s*>/gi, (__, cell) => {
+      cells.push(cleanCell(cell));
+    });
+    if (cells.length) rows.push(cells.join(" | "));
+    return "";
+  });
+  return rows.join("\n");
+};
+var stripPage = (h) => decode2(
+  h.replace(/<(script|style|nav|header|footer|aside|svg|noscript|form)[\s\S]*?<\/\1>/gi, " ").replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (t) => "\n" + flattenTable(t) + "\n").replace(/<\/(p|li|h[1-6]|div|section|article)>|<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ")
+).replace(/[ \t\f\v\r]+/g, " ").replace(/ \|(?= ?\n)/g, "").replace(/\s*\n\s*/g, "\n").trim();
 function isPublicUrl(u) {
   let x;
   try {
@@ -812,14 +1200,20 @@ async function get(url, ms = 12e3, net2) {
   if (net2) net2.ok += 1;
   return r;
 }
-async function ddg(q, net2) {
-  const html = await (await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), 12e3, net2)).text();
+var ddg = (q, net2) => cached("ddg:" + q, 10 * 60 * 1e3, () => ddgFetch(q, net2));
+async function ddgFetch(q, net2) {
+  const res = await get("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), 12e3, net2);
+  const html = await res.text();
+  if (res.status === 202 || /anomaly|unusual traffic/i.test(html.slice(0, 2e4)) && !/result__a/.test(html)) {
+    if (net2) net2.ok -= 1;
+    throw new Error("DuckDuckGo blocked this request (rate limit)");
+  }
   const out = [];
   const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   const snip = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)].map((m2) => strip(m2[1]));
   let m, i = 0;
   while ((m = re.exec(html)) && out.length < 8) {
-    let href = decode(m[1]);
+    let href = decode2(m[1]);
     if (href.startsWith("//")) href = "https:" + href;
     try {
       const u = new URL(href);
@@ -828,6 +1222,24 @@ async function ddg(q, net2) {
     }
     if (isPublicUrl(href)) out.push({ title: strip(m[2]), url: href, snippet: snip[i] ?? "" });
     i++;
+  }
+  return out;
+}
+var GUIDELINE_QUESTION = /\b(regimens?|dos(?:e|es|age)|duration|schedules?|guidelines?|protocols?|cut-?offs?|criteria|classification|staging|first[- ]line|drug of choice|treatment|management|prophylaxis|programme|program|vaccin\w*|immuni[sz]ation|dosing|antidote)\b/i;
+async function officialHits(searchText, subject, net2) {
+  const domains = officialDomainsFor(subject);
+  const groups = [domains.slice(0, 4), domains.slice(4, 8)].filter((g2) => g2.length);
+  const settled = await Promise.allSettled(groups.map((g2) => ddg(`${searchText} ${g2.map((d) => `site:${d}`).join(" OR ")}`, net2)));
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const s of settled) {
+    if (s.status !== "fulfilled") continue;
+    for (const hit of s.value) {
+      const key = hit.url.replace(/[#?].*$/, "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(hit);
+    }
   }
   return out;
 }
@@ -884,7 +1296,7 @@ async function pageText(url, chars = FULL_PAGE_CAP, net2) {
     return text.slice(0, cap);
   }
   if (!/text\/html|text\/plain|xml/i.test(type)) throw new Error("not a web page");
-  return strip((await r.text()).slice(0, 15e5)).slice(0, cap);
+  return stripPage((await r.text()).slice(0, 15e5)).slice(0, cap);
 }
 async function research(query, pageChars = 2500, context = {}) {
   const q = String(query || "").trim().slice(0, 300);
@@ -898,16 +1310,41 @@ async function research(query, pageChars = 2500, context = {}) {
   if (!searchText) throw new Error("Nothing to search for.");
   const net2 = newNet();
   const subject = plan.subject;
-  const [w, p, label] = await Promise.allSettled([
+  const wantsGuideline = GUIDELINE_QUESTION.test(`${context?.question || ""} ${query || ""}`);
+  const [w, p, label, official] = await Promise.allSettled([
     ddg(searchText, net2),
     europePmc(searchText, journalsFor(subject), net2),
-    openFdaByDrug(searchText, net2)
+    openFdaByDrug(searchText, net2),
+    wantsGuideline ? officialHits(searchText, subject, net2) : Promise.resolve([])
   ]);
+  const engineNotes = [];
+  let webHits = w.status === "fulfilled" ? w.value : [];
+  if (w.status === "rejected") engineNotes.push(`DuckDuckGo: ${String(w.reason?.message || w.reason)}`);
+  let papers = p.status === "fulfilled" ? p.value : [];
+  if (p.status === "rejected") engineNotes.push("Europe PMC failed");
+  const wantPapers = Math.max(0, 3 - papers.length);
+  const needPages = webHits.length < 2;
+  const [extraPapers, extraPages] = await Promise.all([
+    wantPapers > 0 ? cached("papers:" + searchText + ":" + wantPapers, 30 * 60 * 1e3, () => keylessPapers(searchText, net2, wantPapers)).catch(() => ({ sources: [], engines: [] })) : { sources: [], engines: [] },
+    needPages ? cached("pages:" + searchText, 30 * 60 * 1e3, () => keylessPages(searchText, net2)).catch(() => ({ sources: [], engines: [] })) : { sources: [], engines: [] }
+  ]);
+  const havePaperUrls = new Set(papers.map((x) => String(x.url || "").toLowerCase()));
+  papers = [...papers, ...extraPapers.sources.filter((x) => !havePaperUrls.has(String(x.url || "").toLowerCase()))].slice(0, 4);
+  const keylessPageHits = extraPages.sources.map((x) => ({ title: x.title, url: x.url, snippet: x.text, keylessText: x.text }));
+  for (const e of [...extraPapers.engines, ...extraPages.engines]) if (!e.ok) engineNotes.push(`${e.name}: ${e.error}`);
+  const usedFallbacks = [...extraPapers.engines, ...extraPages.engines].filter((e) => e.ok && e.count > 0).map((e) => e.name);
   const reachable = net2.ok > 0;
-  const ranked = rankWebHits(w.status === "fulfilled" ? w.value : [], plan, (url) => TRUSTED.test(String(url || "")));
-  const web = ranked.slice(0, 5);
-  const papers = p.status === "fulfilled" ? p.value : [];
-  const pages = await Promise.allSettled(web.map((x) => pageText(x.url, pageChars, net2)));
+  const merged = [];
+  const seenUrl = /* @__PURE__ */ new Set();
+  for (const hit of [...official.status === "fulfilled" ? official.value : [], ...webHits, ...keylessPageHits]) {
+    const key = String(hit.url || "").replace(/[#?].*$/, "");
+    if (!key || seenUrl.has(key)) continue;
+    seenUrl.add(key);
+    merged.push(hit);
+  }
+  const ranked = rankWebHits(merged, plan, (url) => TRUSTED.test(String(url || "")) || isOfficialHost(String(url || "")));
+  const web = ranked.slice(0, wantsGuideline ? 7 : 5);
+  const pages = await Promise.allSettled(web.map((x) => x.keylessText ? Promise.resolve(x.keylessText) : pageText(x.url, pageChars, net2)));
   const readPages = web.map((x, i) => {
     const full = pages[i].status === "fulfilled" ? pages[i].value : "";
     const text = full && full.length > 200 ? passageWindow(full, plan.terms, 2e4) : "";
@@ -939,7 +1376,8 @@ async function research(query, pageChars = 2500, context = {}) {
     };
   }
   const detail = search === "no-connection" ? `The internet could not be reached, so no web source was checked. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : search === "no-results" ? `The internet was reached but matched nothing usable. ${sources.length} passage${sources.length === 1 ? "" : "s"} from the student's own books were found and are numbered below.` : hasInternetSource && !coversQuestion ? "The internet was reached and pages were read, but none of the passages read so far states the detail asked for." : "";
-  return { sources, retrievedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), search, coversQuestion, detail };
+  const fallbackNote = usedFallbacks.length ? `${w.status === "rejected" ? "The main web search was blocked or failed. " : ""}Backup sources also answered: ${usedFallbacks.join(", ")}.` : "";
+  return { sources, retrievedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), search, coversQuestion, detail: [detail, fallbackNote].filter(Boolean).join(" "), engineNotes };
 }
 var SUBJECT_JOURNALS = [
   [/physiolog/i, ["Indian J Physiol Pharmacol"]],
@@ -1206,10 +1644,10 @@ var STOP3 = /* @__PURE__ */ new Set([
   "group",
   "groups"
 ]);
-var cache = null;
+var cache2 = null;
 function loadBundle() {
-  if (cache) return cache;
-  cache = { exams: {} };
+  if (cache2) return cache2;
+  cache2 = { exams: {} };
   for (const dir of DATASET_DIRS) {
     const file = path2.join(dir, "pyq_dataset.json");
     if (!fs2.existsSync(file)) continue;
@@ -1218,14 +1656,14 @@ function loadBundle() {
       for (const q of data.questions || []) {
         const label = String(q.exam || "");
         const text = `${q.question || ""} ${q.explanation || ""}`.toLowerCase();
-        (cache.exams[label] ||= []).push(text);
+        (cache2.exams[label] ||= []).push(text);
       }
-      cache.source = file;
+      cache2.source = file;
       break;
     } catch {
     }
   }
-  return cache;
+  return cache2;
 }
 function namesOf(subtopic) {
   const text = String(subtopic || "").toLowerCase().replace(/[()\[\]\/&]/g, ",").replace(/\band\b/g, ",");
@@ -1320,10 +1758,10 @@ function searchMyBooks(query, subject = "", limit = 4, excerptChars = 1800) {
     WHERE sections_fts MATCH ? AND s.subject ${op} ? ORDER BY rank LIMIT ?`;
   const attempts = [terms.map((t) => `"${t}"`).join(" AND ")];
   if (terms.length > 1) attempts.push(terms.map((t) => `"${t}"`).join(" OR "));
-  const run = (op, value) => {
+  const run = (op, value, n = limit) => {
     for (const match of attempts) {
       try {
-        const found = database.prepare(select(true, op)).all(match, value, limit);
+        const found = database.prepare(select(true, op)).all(match, value, n);
         if (found.length) return found;
       } catch {
       }
@@ -1331,9 +1769,14 @@ function searchMyBooks(query, subject = "", limit = 4, excerptChars = 1800) {
     return [];
   };
   let rows = [];
-  if (bookSubject) {
+  if (bookSubject && limit < 5) {
     rows = run("=", bookSubject);
     if (rows.length < limit) rows = [...rows, ...run("!=", bookSubject).slice(0, limit - rows.length)];
+  } else if (bookSubject) {
+    const own = run("=", bookSubject, limit);
+    const other = run("!=", bookSubject, limit);
+    const nOwn = Math.min(own.length, Math.max(limit - other.length, Math.ceil(limit / 2)));
+    rows = [...own.slice(0, nOwn), ...other.slice(0, limit - nOwn)];
   } else {
     rows = run("!=", "");
   }
@@ -2996,7 +3439,449 @@ function serverDebugLog(hypothesis, message) {
 // src/utils/liveImages.ts
 var FAILED_TTL_MS = 20 * 60 * 1e3;
 
+// src/lib/pyqProfile.ts
+var PYQ_PROFILE = {
+  "NEET_PG": {
+    "all": {
+      "one-liner": 21,
+      "short-case": 3,
+      "vignette": 32,
+      "negative": 5,
+      "image": 39
+    },
+    "subjects": {
+      "Anatomy": {
+        "one-liner": 15,
+        "short-case": 3,
+        "vignette": 18,
+        "negative": 3,
+        "image": 61
+      },
+      "Physiology": {
+        "one-liner": 41,
+        "short-case": 0,
+        "vignette": 24,
+        "negative": 6,
+        "image": 29
+      },
+      "Biochemistry": {
+        "one-liner": 32,
+        "short-case": 5,
+        "vignette": 49,
+        "negative": 0,
+        "image": 14
+      },
+      "Pharmacology": {
+        "one-liner": 42,
+        "short-case": 4,
+        "vignette": 37,
+        "negative": 9,
+        "image": 9
+      },
+      "Microbiology": {
+        "one-liner": 33,
+        "short-case": 2,
+        "vignette": 41,
+        "negative": 3,
+        "image": 21
+      },
+      "Pathology": {
+        "one-liner": 20,
+        "short-case": 3,
+        "vignette": 27,
+        "negative": 7,
+        "image": 43
+      },
+      "PSM": {
+        "one-liner": 56,
+        "short-case": 1,
+        "vignette": 22,
+        "negative": 8,
+        "image": 13
+      },
+      "Forensic": {
+        "one-liner": 32,
+        "short-case": 5,
+        "vignette": 38,
+        "negative": 8,
+        "image": 18
+      },
+      "Ophthalmology": {
+        "one-liner": 6,
+        "short-case": 3,
+        "vignette": 12,
+        "negative": 0,
+        "image": 79
+      },
+      "ENT": {
+        "one-liner": 3,
+        "short-case": 0,
+        "vignette": 28,
+        "negative": 3,
+        "image": 67
+      },
+      "Dermatology": {
+        "one-liner": 7,
+        "short-case": 0,
+        "vignette": 3,
+        "negative": 3,
+        "image": 87
+      },
+      "Radiology": {
+        "one-liner": 0,
+        "short-case": 4,
+        "vignette": 0,
+        "negative": 0,
+        "image": 96
+      },
+      "Medicine": {
+        "one-liner": 11,
+        "short-case": 2,
+        "vignette": 54,
+        "negative": 8,
+        "image": 25
+      },
+      "Surgery": {
+        "one-liner": 5,
+        "short-case": 2,
+        "vignette": 20,
+        "negative": 0,
+        "image": 74
+      },
+      "Orthopedics": {
+        "one-liner": 8,
+        "short-case": 3,
+        "vignette": 19,
+        "negative": 5,
+        "image": 65
+      },
+      "Paediatrics": {
+        "one-liner": 18,
+        "short-case": 5,
+        "vignette": 49,
+        "negative": 3,
+        "image": 26
+      },
+      "OBG": {
+        "one-liner": 17,
+        "short-case": 5,
+        "vignette": 41,
+        "negative": 5,
+        "image": 32
+      }
+    }
+  },
+  "INI_CET": {
+    "all": {
+      "one-liner": 43,
+      "short-case": 4,
+      "vignette": 16,
+      "negative": 16,
+      "image": 21
+    },
+    "subjects": {
+      "Anatomy": {
+        "one-liner": 34,
+        "short-case": 1,
+        "vignette": 4,
+        "negative": 8,
+        "image": 52
+      },
+      "Anaesthesia": {
+        "one-liner": 60,
+        "short-case": 3,
+        "vignette": 13,
+        "negative": 17,
+        "image": 7
+      },
+      "Biochemistry": {
+        "one-liner": 63,
+        "short-case": 5,
+        "vignette": 6,
+        "negative": 15,
+        "image": 10
+      },
+      "PSM": {
+        "one-liner": 57,
+        "short-case": 3,
+        "vignette": 15,
+        "negative": 18,
+        "image": 8
+      },
+      "Dermatology": {
+        "one-liner": 30,
+        "short-case": 0,
+        "vignette": 9,
+        "negative": 8,
+        "image": 53
+      },
+      "ENT": {
+        "one-liner": 31,
+        "short-case": 5,
+        "vignette": 16,
+        "negative": 18,
+        "image": 29
+      },
+      "Forensic": {
+        "one-liner": 52,
+        "short-case": 0,
+        "vignette": 11,
+        "negative": 18,
+        "image": 19
+      },
+      "Medicine": {
+        "one-liner": 27,
+        "short-case": 8,
+        "vignette": 25,
+        "negative": 22,
+        "image": 18
+      },
+      "Microbiology": {
+        "one-liner": 41,
+        "short-case": 1,
+        "vignette": 12,
+        "negative": 14,
+        "image": 33
+      },
+      "OBG": {
+        "one-liner": 34,
+        "short-case": 4,
+        "vignette": 28,
+        "negative": 28,
+        "image": 6
+      },
+      "Ophthalmology": {
+        "one-liner": 54,
+        "short-case": 3,
+        "vignette": 14,
+        "negative": 13,
+        "image": 17
+      },
+      "Orthopedics": {
+        "one-liner": 25,
+        "short-case": 9,
+        "vignette": 21,
+        "negative": 11,
+        "image": 34
+      },
+      "Paediatrics": {
+        "one-liner": 34,
+        "short-case": 15,
+        "vignette": 28,
+        "negative": 17,
+        "image": 7
+      },
+      "Pathology": {
+        "one-liner": 47,
+        "short-case": 2,
+        "vignette": 13,
+        "negative": 16,
+        "image": 22
+      },
+      "Pharmacology": {
+        "one-liner": 57,
+        "short-case": 3,
+        "vignette": 18,
+        "negative": 12,
+        "image": 10
+      },
+      "Physiology": {
+        "one-liner": 63,
+        "short-case": 3,
+        "vignette": 1,
+        "negative": 11,
+        "image": 21
+      },
+      "Surgery": {
+        "one-liner": 35,
+        "short-case": 5,
+        "vignette": 24,
+        "negative": 19,
+        "image": 18
+      },
+      "Psychiatry": {
+        "one-liner": 53,
+        "short-case": 3,
+        "vignette": 8,
+        "negative": 33,
+        "image": 3
+      },
+      "Radiology": {
+        "one-liner": 24,
+        "short-case": 0,
+        "vignette": 8,
+        "negative": 8,
+        "image": 59
+      }
+    }
+  }
+};
+
+// src/lib/pipelines/iniCet.ts
+var INI_CET_PIPELINE = {
+  exam: "INI_CET",
+  name: "INI-CET",
+  optionCount: 4,
+  pattern: "INI-CET (AIIMS) pattern. Exactly 4 options (A-D); +1 correct, -1/3 wrong. Many items are crisp one-liners that test one level deeper than the headline textbook fact (the exception, the most specific vs the most common, the first vs the best). Others are short clinical vignettes or image items described in words. About one item in six asks which option is NOT true or is the EXCEPTION (write NOT or EXCEPT in capitals). Recent guidelines and recent advances are fair game. Distractors are very close, from the same family as the key, so elimination is hard.",
+  rules: "INI-CET (AIIMS): exactly 4 options (A-D), one correct. Distractors are very close (same drug class, same organism family, neighbouring structures); elimination must be hard. Current guidelines (WHO, ICMR, NTEP, NACO) and standard texts decide the key.",
+  itemShape(idx) {
+    const slot = idx % 6;
+    if (slot === 1) return "Negative item: the question line asks which option is NOT true or is the EXCEPTION (capitals). Exactly three options are true statements and one is false; the false one is the key.";
+    if (slot === 3) return "Short clinical vignette of 2 to 4 sentences ending with one single-best-answer lead-in.";
+    if (slot === 5) return "Image-described item: start the stem with the picture type and state its findings in words, then ask for the diagnosis, finding or structure.";
+    return "One-liner single best answer that tests one level deeper than the headline fact (an exception, a most-specific or a first-line detail). No patient.";
+  },
+  styleMix(subject) {
+    const profile = PYQ_PROFILE.INI_CET;
+    const known = subject && Object.keys(profile.subjects).find((k) => k.toLowerCase() === subject.toLowerCase());
+    const sh = known ? profile.subjects[known] : profile.all;
+    const calc = subject === "PSM" ? 4 : 1;
+    const mech = 3;
+    const mix = [
+      ["one-liner", Math.max(0, sh["one-liner"] - calc - mech)],
+      ["short-case", sh["short-case"]],
+      ["vignette", sh.vignette],
+      ["negative", sh.negative],
+      ["image", sh.image],
+      ["calculation", calc],
+      ["mechanism", mech],
+      // Match-the-following is about 2% of INI-CET papers.
+      ["match", 2]
+    ];
+    return mix.filter(([, w]) => w > 0);
+  },
+  leadInMix: [["diagnosis", 30], ["finding", 35], ["investigation-of-choice", 12], ["drug-of-choice", 10], ["next-step", 9], ["treatment-of-choice", 4]],
+  // INI-CET is already the harder paper; the learner wants it harder still.
+  tierMix: [["LOW", 5], ["MEDIUM", 40], ["HIGH", 55]],
+  tierText(style, tier) {
+    const caseLike = !style || style === "vignette" || style === "short-case" || style === "image";
+    if (caseLike) {
+      return {
+        LOW: "EASY (still AIIMS level): one inferential step; distractors are close relatives of the key.",
+        MEDIUM: "MEDIUM, above the real INI-CET: identify the condition from subtle findings (never named), then answer a detail about it. Distractors are its nearest mimics.",
+        HIGH: "HARD, above the real INI-CET: an atypical or overlapping presentation and two or three reasoning steps; the deciding clue is one specific finding or number in the stem. Every distractor is correct in a closely related scenario."
+      }[tier];
+    }
+    return {
+      LOW: "EASY: a standard fact asked precisely; distractors from the same family.",
+      MEDIUM: "MEDIUM: one level deeper than the headline fact (the exception, the most specific, the first-line vs the drug of choice); distractors are the classic near-misses.",
+      HIGH: "HARD: a precise, high-yield detail a well-read candidate knows (recent guideline change, the exception to the rule, the rarer-but-classic association); every distractor is individually plausible."
+    }[tier];
+  },
+  styleAddendum: {
+    vignette: "INI-CET vignette length overrides the length above: 2 to 4 sentences, about 35 to 60 words, with the one or two findings that decide the answer.",
+    "one-liner": "Ask one level deeper than the headline fact; the four options are close members of the same family.",
+    negative: "Write NOT or EXCEPT in capitals. The three true options are each specific, examinable facts (not vague truisms); the false one is a classic trap.",
+    match: "Every pair in the lists must be a standard, examinable association."
+  },
+  examinerFocus: "Hold it to INI-CET (AIIMS) standard: the key must match standard texts and current guidelines (WHO, ICMR, NTEP, NACO, national programmes). Also mark ok=false when the key is what one source or set of notes says but not the standard textbook answer (for example a Mantoux cut-off or a lesion size that differs from the standard figure). For NOT/EXCEPT items exactly one option must be false and the other three clearly true. Close distractors are expected, but only one may be defensible.",
+  examinerChecks: "Also mark ok=false when: the stem or question line names or paraphrases the answer (for example a biopsy report that already states the finding asked for); the patient case is not needed to answer the question; the question asks a percentage, size, case-series figure or eponym that standard textbooks do not emphasise; or the item is really about another disease (for example leprosy or syphilis under a tuberculosis topic).",
+  selfCheck: `Before replying, check your draft and fix it if any answer is no: (1) exactly 4 options, exactly one defensible; for NOT/EXCEPT items exactly one option is false; (2) the stem never names the answer or its distinctive words; (3) the stem ends with the last finding and the question is only in questionText; (4) options are plain labels (statements only for NOT/true items) with no reasoning, no brackets and no "all/none of the above"; (5) the correct option is not the longest and not the only one with words like always, never or only; (6) no two options mean the same thing; (7) the explanation has Background, why the key is right, one bullet for every wrong option by its text, and High-yield; (8) the stem never points at a picture ("this image") unless the style is image-based and the stem says what it shows; (9) the stem does not name or paraphrase the answer; (10) if there is a patient, the question needs the patient's findings (never a general proportion, commonest-site-overall or alternative-name question after a case); (11) no two options are opposites of each other ("usually one joint" / "usually several joints"); (12) the key is the standard textbook answer, not one source's wording.`,
+  normalize(q) {
+    splitStemQuestion(q);
+    cleanOptionLabels(q);
+    const line = q.questionText;
+    if (line) q.questionText = line.replace(/\b(not|except|incorrect)\b(?![-])(?=[^?]*\?)/gi, (w) => w.toUpperCase());
+  },
+  validate(q) {
+    if (hasAboveOption(q)) return 'above-option: INI-CET items here never use "all/none of the above" or "both A and B"; give four real, specific options';
+    return null;
+  }
+};
+
+// src/lib/pipelines/neetPg.ts
+var SBA = "Single best answer with a direct lead-in (diagnosis, finding, next step, drug of choice or investigation of choice). Never a numbered-statements, match or assertion-reason item.";
+var NEET_PG_PIPELINE = {
+  exam: "NEET_PG",
+  name: "NEET PG",
+  optionCount: 4,
+  pattern: 'NEET PG (NBEMS) pattern. Exactly 4 options (A-D), one correct; +4 for correct, -1 for wrong. Mostly clinical vignettes of 3 to 5 sentences giving age, sex, presenting complaint, relevant history, vitals or examination and one or two investigation results, ending with ONE lead-in ("What is the most likely diagnosis?", "What is the next best step in management?", "What is the investigation of choice?", "What is the drug of choice?"). Mix in one-liner recall items and image-based items whose finding is described in words ("A chest X-ray shows ..."). Integrated items that link two subjects (for example pathology with pharmacology) are welcome. Every item is single best answer: no numbered-statement, match-the-following or assertion-reason items.',
+  rules: "NEET PG (NBEMS): exactly 4 options (A-D), one correct, single best answer. Options are homogeneous and close. Standard Indian textbook answers (Harrison, Robbins, KD Tripathi, Park, Bailey & Love, DC Dutta, Ghai) decide the key.",
+  itemShape(idx) {
+    const slot = idx % 6;
+    if (slot === 2) return `${SBA} One-liner recall: one short line, no patient.`;
+    if (slot === 5) return `${SBA} Image-described item: start the stem with the picture type and state its findings in words ("An ECG shows ..."), then ask for the diagnosis or structure.`;
+    return `${SBA} Clinical vignette of 3 to 5 sentences.`;
+  },
+  styleMix(subject) {
+    const profile = PYQ_PROFILE.NEET_PG;
+    const known = subject && Object.keys(profile.subjects).find((k) => k.toLowerCase() === subject.toLowerCase());
+    const sh = known ? profile.subjects[known] : profile.all;
+    const calc = subject === "PSM" ? 5 : 1;
+    const mech = 2;
+    const mix = [
+      ["one-liner", Math.max(0, sh["one-liner"] - calc - mech)],
+      ["short-case", sh["short-case"]],
+      // Harder than the paper: some one-liner weight moves to full vignettes.
+      ["vignette", sh.vignette + 5],
+      ["negative", sh.negative],
+      ["image", sh.image],
+      ["calculation", calc],
+      ["mechanism", mech]
+    ];
+    return mix.filter(([, w]) => w > 0);
+  },
+  leadInMix: [["diagnosis", 30], ["finding", 25], ["next-step", 17], ["drug-of-choice", 12], ["investigation-of-choice", 10], ["treatment-of-choice", 6]],
+  // Real NEET PG is roughly 20/45/35; the learner wants it harder.
+  tierMix: [["LOW", 10], ["MEDIUM", 45], ["HIGH", 45]],
+  tierText(style, tier) {
+    const caseLike = !style || style === "vignette" || style === "short-case" || style === "image";
+    if (caseLike) {
+      return {
+        LOW: "EASY (still exam level): one inferential step from the findings to the answer. Distractors share the key's category and are plausible.",
+        MEDIUM: "MEDIUM, a little above the real NEET PG: the candidate must first identify the condition from the findings (never named in the stem), then answer about it. Distractors are its classic mimics.",
+        HIGH: "HARD, above the real NEET PG: two or three reasoning steps (findings \u2192 diagnosis \u2192 complication, mechanism or management), or an atypical presentation. Every distractor is right in a slightly different patient; only the exact details given make one option best. Not answerable from one buzzword."
+      }[tier];
+    }
+    return {
+      LOW: "EASY: a standard textbook fact; distractors are plausible but clearly weaker.",
+      MEDIUM: "MEDIUM: recall plus one inference; distractors are the classic confusions of this fact.",
+      HIGH: "HARD: precise textbook detail (the exception, the most common vs the most specific, the first vs the best); every distractor is individually plausible."
+    }[tier];
+  },
+  styleAddendum: {
+    vignette: "NEET PG vignette length overrides the length above: 3 to 5 sentences, about 45 to 70 words, with age, sex, complaint with duration, relevant history, vitals or examination and one or two results.",
+    "short-case": "Keep it to two or three sentences, about 25 to 40 words.",
+    negative: "NEET PG uses NOT items rarely: make the false option a classic misconception, and write NOT or EXCEPT in capitals."
+  },
+  examinerFocus: "Hold it to NEET PG standard: the key must be the answer in standard Indian textbooks (Harrison, Robbins, KD Tripathi, Park, Bailey & Love, DC Dutta, Ghai) and current national programmes. Also mark ok=false when the key is what one source or set of notes says but not the standard textbook answer (for example a Mantoux cut-off or a lesion size that differs from the standard figure). A question asking for an obscure research detail, a non-Indian practice that conflicts with the Indian standard, or a key that depends on one particular book edition is not acceptable.",
+  examinerChecks: "Also mark ok=false when: the stem or question line names or paraphrases the answer (for example a biopsy report that already states the finding asked for); the patient case is not needed to answer the question; the question asks a percentage, size, case-series figure or eponym that standard textbooks do not emphasise; or the item is really about another disease (for example leprosy or syphilis under a tuberculosis topic).",
+  selfCheck: `Before replying, check your draft and fix it if any answer is no: (1) exactly 4 options, one clearly best; (2) the stem never names the answer or its distinctive words; (3) the stem ends with the last finding and the question is only in questionText; (4) every option is a plain label of 1 to 6 words with no reasoning, no brackets, no "all/none of the above"; (5) the correct option is not the longest and not the only one with words like always, never or only; (6) no two options mean the same thing; (7) the explanation has Background, why the key is right, one bullet for every wrong option by its text, and High-yield; (8) the stem never points at a picture ("this image") unless the style is image-based and the stem says what it shows; (9) the stem does not name or paraphrase the answer; (10) if there is a patient, the question needs the patient's findings (never a general proportion, commonest-site-overall or alternative-name question after a case); (11) no two options are opposites of each other ("usually one joint" / "usually several joints"); (12) the key is the standard textbook answer, not one source's wording.`,
+  normalize(q) {
+    splitStemQuestion(q);
+    cleanOptionLabels(q);
+    const line = q.questionText;
+    if (line) q.questionText = line.replace(/\b(not|except)\b(?=[^?]*\?)/g, (w) => w.toUpperCase());
+  },
+  validate(q) {
+    if (hasAboveOption(q)) return 'above-option: NEET PG items never use "all/none of the above" or "both A and B"; give four real, specific options';
+    const optionText = (q.options ?? []).map((o) => o.text).join(" ");
+    if (/^\s*\d(\s*(,|and|&)\s*\d)+\s*(only)?\s*$/im.test(optionText) || /\bA\s*[-–]\s*\d\s*,\s*B\s*[-–]\s*\d/.test(optionText)) {
+      return "coded-options: NEET PG is single best answer; do not use statement combinations or match codes";
+    }
+    return null;
+  }
+};
+
+// src/lib/pipelines/index.ts
+function pipelineFor(exam) {
+  if (exam === "NEET_PG") return NEET_PG_PIPELINE;
+  if (exam === "INI_CET") return INI_CET_PIPELINE;
+  return null;
+}
+
 // src/lib/diagnostics.ts
+var tokenNotes = [];
+var CHARS_PER_TOKEN = 4;
+function noteTokens(purpose, model, inputChars, outputChars, ok) {
+  tokenNotes.push({
+    purpose: purpose || "other",
+    model,
+    input: Math.ceil(inputChars / CHARS_PER_TOKEN),
+    output: Math.ceil(outputChars / CHARS_PER_TOKEN),
+    ok
+  });
+}
 var g = globalThis;
 function downloadRunReport() {
   const report = g.__runReport;
@@ -3014,10 +3899,235 @@ function downloadRunReport() {
 g.pulseRunReport = downloadRunReport;
 
 // src/lib/ai.ts
+function sameLine(q) {
+  const norm2 = (t) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return norm2(String(q.questionText ?? "")) === norm2(String(q.stem ?? ""));
+}
+function stemAndLine(q) {
+  const line = String(q.questionText ?? "").trim();
+  return sameLine(q) || !line ? String(q.stem ?? "") : `${q.stem ?? ""}
+${line}`;
+}
+var AI_PROVIDER_IDS = ["gemini", "chatgpt", "claude", "grok", "deeprelay"];
+var DEFAULT_MODELS = {
+  gemini: "gemini-3.8-flash",
+  chatgpt: "gpt-6.1-sol",
+  claude: "claude-sonnet-5-5",
+  grok: "grok-4.7",
+  // Custom OpenAI-compatible endpoint — user supplies URL, model id and key.
+  custom: "gpt-4o-mini",
+  deeprelay: "deeprelay/deepseek-v4.1-flash"
+};
+var NOT_CONNECTED_MESSAGE = "Connect an AI provider in Settings \u2192 AI Subscription Hub.";
+var AiError = class extends Error {
+  constructor(message, kind = "api") {
+    super(message);
+    this.name = "AiError";
+    this.kind = kind;
+  }
+};
+function getActiveProvider() {
+  const stored = localStorage.getItem("ai.activeProvider");
+  if (stored === "opencode") {
+    try {
+      localStorage.removeItem("ai.activeProvider");
+      localStorage.removeItem("ai.model.opencode");
+    } catch {
+    }
+    return null;
+  }
+  const value = stored === "vyce" ? "deeprelay" : stored;
+  return value && AI_PROVIDER_IDS.includes(value) ? value : null;
+}
+function getModel(provider) {
+  const value = localStorage.getItem(`ai.model.${provider}`);
+  return value && value.trim() ? value.trim() : null;
+}
+function getEffectiveModel(provider) {
+  const stored = getModel(provider);
+  return stored ?? DEFAULT_MODELS[provider];
+}
+function writeRoute() {
+  const active = getActiveProvider();
+  return active ? { provider: active, model: getEffectiveModel(active) } : null;
+}
 var RESEARCH_TTL_MS = 5 * 6e4;
 var PLAN_FACTS_SYSTEM = 'You list distinct, high-yield, exam-testable facts about one subtopic that the sources state. Do not repeat a fact already planned. Each fact must be a definite statement a student can be tested on (a cause, a feature, a number, a test, a drug effect, a warning), never an uncertain or open one ("may", "remains uncertain", "has been evaluated"). Prefer statements from an official drug label or textbook over research papers. ' + scopeInstruction() + ' Every fact must sit inside that boundary. Copy the supporting words exactly from one source. Reply with ONLY JSON: {"facts":[{"fact":"one sentence","quote":"exact words from that source","source":<source number>}]}. Skip facts an exam would not ask: experimental or investigational products and trial codes (for example a named nanocarrier or formulation under study), drug-delivery carrier science (liposome, transfersome, hydrogel), and labels that textbooks disagree on (such as which "generation" an older drug belongs to). Prefer what NEET-PG and INI-CET papers ask: uses and the drug of choice, mechanism, the key adverse effect, interactions, contraindications, how to tell similar drugs apart. Give at most the number of facts asked for; give fewer if the sources do not support that many.';
+async function examinerRejects(q, topic, signal, trustedKey, pipe) {
+  const provider = getActiveProvider();
+  if (!provider) return null;
+  const raw = await aiComplete({
+    system: trustedKey ? "You are an examiner checking one MCQ written from the learner's own notes. The notes are trusted: treat the marked answer as true and do not judge it against other textbooks. Mark ok=false only when you are sure of one of these: (1) the stem, options or explanation contradict themselves; (2) more than one option is defensible or no option answers the question asked; (3) the explanation supports a different option than the marked answer; (4) the stem or options are incomplete; (5) the item is about an unrelated drug, disease, animal exposure or a very rare reaction outside the requested topic, or its stem is research, audit or resident-review wording rather than a patient or exam situation. Judge the explanation only for contradicting the key; its wording and length do not matter. A NOT or EXCEPT item with exactly one false option is fine. Otherwise ok=true. " + (pipe ? `${pipe.examinerChecks} ` : "") + 'When ok=false, say exactly what to change so the question becomes correct (for example which option to reword or which finding to add), so it can be repaired instead of thrown away. Reply with ONLY JSON: {"ok":true,"problem":""} or {"ok":false,"problem":"one short sentence: the problem and the fix"}.' : "You are an examiner checking one MCQ before it is used. Mark ok=false only when you are sure of a problem: (1) the marked answer is wrong by standard textbooks and guidelines; (2) more than one option is defensible; (3) the answer only holds for one particular study, cohort, hospital, country or textbook layout, or it is a research detail no exam would ask; (4) the stem or options are incomplete or contradict themselves; (5) the question is out of scope, or about an unrelated drug, disease or animal exposure, or a very rare reaction outside the requested topic, or written as research, audit or resident-review wording: " + scopeInstruction() + " A NOT or EXCEPT question with a correct standard textbook key is ok=true. Otherwise ok=true. " + (pipe ? `${pipe.examinerFocus} ` : "") + (pipe ? `${pipe.examinerChecks} ` : "") + 'When ok=false, say exactly what to change so the question becomes correct (for example which option to reword or which finding to add), so it can be repaired instead of thrown away. Reply with ONLY JSON: {"ok":true,"problem":""} or {"ok":false,"problem":"one short sentence: the problem and the fix"}.',
+    messages: [{
+      role: "user",
+      content: `Topic: ${topic}
+${stemAndLine(q)}
+` + q.options.map((o) => `${o.id}) ${o.text}`).join("\n") + `
+Marked answer: ${q.correctOption}
+Explanation: ${String(q.explanation ?? "").slice(0, 1500)}`
+    }],
+    json: true,
+    effort: "low",
+    purpose: "examiner",
+    provider,
+    model: getEffectiveModel(provider),
+    signal
+  }).catch(() => "");
+  const verdict = extractJson(raw);
+  if (verdict?.ok !== false) return null;
+  return String(verdict.problem ?? "").trim().slice(0, 600) || "the examiner found a problem with the key or the options";
+}
+globalThis.__reExamine = async (q, topic, exam) => examinerRejects(q, topic, void 0, true, pipelineFor(exam));
 var stageLog = [];
 globalThis.__stageLog = stageLog;
+function logStage(stage, ms, lane, detail) {
+  stageLog.push({ stage, lane, ms: Math.round(ms), endedAt: (/* @__PURE__ */ new Date()).toISOString().slice(11, 23), detail });
+}
+async function timed(stage, fn, lane) {
+  const t0 = performance.now();
+  try {
+    return await fn();
+  } finally {
+    logStage(stage, performance.now() - t0, lane);
+  }
+}
+var laneCapacity = { deeprelay: 10 };
+var laneBusy = { deeprelay: 0 };
+var laneWaiters = [];
+function isMixedMode() {
+  return getActiveProvider() === "deeprelay";
+}
+async function acquireLane(only) {
+  for (; ; ) {
+    const order = only ? [only] : ["deeprelay"];
+    for (const p of order) {
+      if (laneBusy[p] < laneCapacity[p]) {
+        laneBusy[p] += 1;
+        return {
+          provider: p,
+          model: getEffectiveModel(p),
+          release: () => {
+            laneBusy[p] -= 1;
+            laneWaiters.splice(0).forEach((wake) => wake());
+          }
+        };
+      }
+    }
+    await new Promise((resolve) => laneWaiters.push(resolve));
+  }
+}
+async function aiComplete(options) {
+  if (options.work && !options.provider && isMixedMode()) {
+    const lane = await timed("lane-wait", () => acquireLane("deeprelay"));
+    try {
+      return await timed("write", () => completeOn(lane.provider, lane.model, options), lane.provider);
+    } finally {
+      lane.release();
+    }
+  }
+  const route = options.work ? writeRoute() : null;
+  const provider = route?.provider ?? options.provider ?? getActiveProvider();
+  if (!provider) {
+    throw new AiError(`No AI provider is active. ${NOT_CONNECTED_MESSAGE}`, "not_connected");
+  }
+  return await timed("write", () => completeOn(provider, options.model ?? route?.model ?? getEffectiveModel(provider), options), provider);
+}
+async function runCompletionJob(body, signal) {
+  const headers = { "Content-Type": "application/json" };
+  const start = await fetch("/api/ai/jobs", { method: "POST", headers, body: JSON.stringify(body), signal });
+  if (!start.ok) return start;
+  const { id } = await start.json();
+  const pause = (ms) => new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  let failures = 0;
+  for (; ; ) {
+    await pause(400);
+    try {
+      const check = await fetch(`/api/ai/jobs/${id}`, { signal });
+      if (!check.ok) throw new Error(`job check failed (HTTP ${check.status})`);
+      failures = 0;
+      const data = await check.json();
+      if (!data.done) continue;
+      return new Response(JSON.stringify(data.body), {
+        status: data.status,
+        headers: data.retryAfter ? { "retry-after": data.retryAfter } : void 0
+      });
+    } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        void fetch(`/api/ai/jobs/${id}`, { method: "DELETE" }).catch(() => {
+        });
+        throw err;
+      }
+      if (++failures >= 5) throw err;
+    }
+  }
+}
+async function completeOn(provider, model, options) {
+  const inputChars = String(options.system ?? "").length + JSON.stringify(options.messages ?? []).length;
+  try {
+    const text = await completeOnRaw(provider, model, options);
+    noteTokens(options.purpose, model, inputChars, text.length, true);
+    return text;
+  } catch (err) {
+    if (!options.signal?.aborted) noteTokens(options.purpose, model, inputChars, 0, false);
+    throw err;
+  }
+}
+async function completeOnRaw(provider, model, options) {
+  const body = {
+    provider,
+    model,
+    system: options.system,
+    messages: options.messages,
+    json: options.json,
+    effort: options.effort,
+    groundOn: options.groundOn,
+    purpose: options.purpose
+  };
+  let res;
+  try {
+    res = options.work ? await runCompletionJob(body, options.signal) : await fetch("/api/ai/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options.signal
+    });
+  } catch (err) {
+    if (options.signal?.aborted || err?.name === "AbortError") {
+      throw new AiError("Generation stopped.", "aborted");
+    }
+    throw new AiError(`Could not reach the local AI server (${err?.message || "network error"}).`, "network");
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+  }
+  if (!res.ok) {
+    const srvMsg = typeof data?.error === "string" ? data.error : `AI request failed (HTTP ${res.status}).`;
+    if (res.status === 401) throw new AiError(`${provider.charAt(0).toUpperCase() + provider.slice(1)} is not connected. ${NOT_CONNECTED_MESSAGE}`, "not_connected");
+    const err = new AiError(srvMsg, "api");
+    err.status = res.status;
+    const ra = res.headers.get("retry-after");
+    if (ra) {
+      const secs = Number(ra);
+      if (Number.isFinite(secs)) err.retryAfterMs = Math.min(3e4, Math.max(0, secs * 1e3));
+    }
+    throw err;
+  }
+  const text = typeof data?.text === "string" ? data.text : "";
+  if (!text.trim()) throw new AiError("The AI provider returned an empty response. Try again.", "api");
+  return text;
+}
 function extractJson(raw) {
   if (!raw) return null;
   let text = raw.trim();
@@ -3193,6 +4303,24 @@ app.use((req, res, next) => {
     res.status(400).type("html").send(pinPage("Could not read the PIN. Try again."));
   });
 });
+var headerPinAttempts = /* @__PURE__ */ new Map();
+app.use((req, res, next) => {
+  if (!PHONE_MODE) return next();
+  const origin = String(req.headers.origin || "");
+  if (origin !== "http://localhost" && origin !== "https://localhost" && origin !== "capacitor://localhost") {
+    return next();
+  }
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", String(req.headers["access-control-request-headers"] || "Content-Type, X-Pulse-Pin, Authorization, x-session-id"));
+  res.setHeader("Access-Control-Max-Age", "600");
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 app.use((req, res, next) => {
   const host = String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
   if (host === "localhost" || host === "127.0.0.1" || host === "::1") return next();
@@ -3201,7 +4329,33 @@ app.use((req, res, next) => {
     return;
   }
   if (isLoopbackRequest(req)) return next();
-  if (constantTimeEqual(readCookie(req, PIN_COOKIE_NAME), PIN_COOKIE_VALUE)) return next();
+  const headerPin = String(req.headers["x-pulse-pin"] || "");
+  const remoteAddress = req.socket.remoteAddress || "";
+  const now = Date.now();
+  const attempt = headerPinAttempts.get(remoteAddress);
+  if (constantTimeEqual(readCookie(req, PIN_COOKIE_NAME), PIN_COOKIE_VALUE)) {
+    headerPinAttempts.delete(remoteAddress);
+    return next();
+  }
+  if (headerPin.length > 0) {
+    if (attempt && attempt.lockedUntil > now) {
+      res.setHeader("Retry-After", String(Math.ceil((attempt.lockedUntil - now) / 1e3)));
+      res.status(429).json({ error: "Too many attempts." });
+      return;
+    }
+    if (constantTimeEqual(headerPin, REMOTE_PIN)) {
+      headerPinAttempts.delete(remoteAddress);
+      return next();
+    }
+    const wrong = (attempt?.wrong || 0) + 1;
+    if (wrong >= 5) {
+      headerPinAttempts.set(remoteAddress, { wrong, lockedUntil: now + 6e4 });
+      res.setHeader("Retry-After", "60");
+      res.status(429).json({ error: "Too many attempts." });
+      return;
+    }
+    headerPinAttempts.set(remoteAddress, { wrong, lockedUntil: 0 });
+  }
   if (isApiPath(req.path)) {
     res.status(401).json({ error: "PIN required." });
     return;
@@ -3218,7 +4372,7 @@ try {
 app.use("/api/ai/complete-images", express.json({ limit: "30mb" }));
 app.use("/api/export/questions", express.json({ limit: "5mb" }));
 app.use(express.json({ limit: "50mb" }));
-var DEFAULT_MODELS = {
+var DEFAULT_MODELS2 = {
   gemini: "gemini-3.8-flash",
   chatgpt: "gpt-6.1-sol",
   claude: "claude-sonnet-5-5",
@@ -3315,7 +4469,7 @@ async function runCompletion(opts) {
   if (provider === "gemini") {
     const ai = getGemini();
     if (!ai) throw new ApiError(notConnectedMessage("gemini"), 401);
-    const model_ = model || DEFAULT_MODELS.gemini;
+    const model_ = model || DEFAULT_MODELS2.gemini;
     const lastUserAt = messages.map((m) => m.role).lastIndexOf("user");
     const contents = messages.map((m, i) => ({
       role: m.role === "assistant" ? "model" : "user",
@@ -3358,7 +4512,7 @@ async function runCompletion(opts) {
     if (!endpoint) throw new ApiError(notConnectedMessage("custom"), 401);
     const baseUrl = endpoint.endpointUrl;
     const key = endpoint.apiKey;
-    const model_ = model || endpoint.defaultModel || DEFAULT_MODELS.custom;
+    const model_ = model || endpoint.defaultModel || DEFAULT_MODELS2.custom;
     if (!baseUrl || !key || !model_) throw new ApiError(notConnectedMessage("custom"), 401);
     const payloadMessages = [
       ...system ? [{ role: "system", content: system }] : [],
@@ -3435,7 +4589,7 @@ async function runCompletion(opts) {
   if (provider === "deeprelay") {
     const key = deepRelayKey();
     if (!key) throw new ApiError(notConnectedMessage("deeprelay"), 401);
-    const model_ = model || DEFAULT_MODELS.deeprelay;
+    const model_ = model || DEFAULT_MODELS2.deeprelay;
     const r = await fetch(`${DEEPRELAY_BASE_URL}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: model_, messages: [...system ? [{ role: "system", content: system }] : [], ...openAiMessages(messages, images)], temperature: 0.7, ...json ? { response_format: { type: "json_object" } } : {} }), ...signal ? { signal } : {} });
     const raw = await r.text();
     let body = {};
@@ -3459,7 +4613,7 @@ async function runCompletion(opts) {
   try {
     return await chat({
       provider: internal,
-      model: model || DEFAULT_MODELS[provider],
+      model: model || DEFAULT_MODELS2[provider],
       system,
       messages,
       json,
@@ -3490,7 +4644,7 @@ app.get("/api/oauth/status", (req, res) => {
       deeprelay: { connected: isProviderConnected("deeprelay") },
       custom: { connected: isProviderConnected("custom") }
     },
-    defaults: DEFAULT_MODELS
+    defaults: DEFAULT_MODELS2
   });
 });
 app.post("/api/pyq/weights", (req, res) => {
@@ -3506,8 +4660,8 @@ app.post("/api/ai/split-topic", async (req, res) => {
   const model = String(req.body?.model || "");
   if (!topic || !provider) return res.json({ subtopics: [] });
   const key = JSON.stringify({ topic, exam, provider, model });
-  const cached = splitCache.get(key);
-  if (cached) return res.json({ subtopics: cached.map((s) => s.subtopic), priorities: cached.map((s) => s.priority), facts: cached.map((s) => s.facts) });
+  const cached2 = splitCache.get(key);
+  if (cached2) return res.json({ subtopics: cached2.map((s) => s.subtopic), priorities: cached2.map((s) => s.priority), facts: cached2.map((s) => s.facts) });
   let evidence = "";
   try {
     const found = await research(topic, 1200);
@@ -4262,8 +5416,8 @@ var VERDICT_TTL_MS = 6 * 60 * 60 * 1e3;
 var DEFINITIVE_REFUSAL = /usage credits|credits are required|out of credits|spending.limit|balance exhausted|does not support this model|does not include|not supported|not found|no access|permission|not available|unknown model|invalid model|deprecated/i;
 async function probeModel(uiId, modelId, force = false) {
   const key = `${uiId}:${modelId}`;
-  const cached = modelVerdicts.get(key);
-  if (!force && cached && Date.now() - cached.at < VERDICT_TTL_MS) return cached;
+  const cached2 = modelVerdicts.get(key);
+  if (!force && cached2 && Date.now() - cached2.at < VERDICT_TTL_MS) return cached2;
   let verdict = { ok: true };
   try {
     const text = await Promise.race([
@@ -4607,7 +5761,7 @@ app.post("/api/ai/complete", async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(502).json({ error: "The AI provider returned an empty response. Try again." });
     }
-    return res.json({ success: true, text, model: model || DEFAULT_MODELS[provider] });
+    return res.json({ success: true, text, model: model || DEFAULT_MODELS2[provider] });
   } catch (err) {
     if (controller.signal.aborted) return;
     const status2 = err instanceof ApiError ? err.status : 502;
@@ -4630,7 +5784,7 @@ app.post("/api/ai/complete-images", async (req, res) => {
     const text = await gatedCompletion({ provider, model, system, messages, json, effort, purpose: "vision", images: pictures, signal: controller.signal });
     if (controller.signal.aborted) return;
     if (!text || !text.trim()) return res.status(502).json({ error: "The AI provider returned an empty response. Try again." });
-    return res.json({ success: true, text, model: model || DEFAULT_MODELS[provider] });
+    return res.json({ success: true, text, model: model || DEFAULT_MODELS2[provider] });
   } catch (err) {
     if (controller.signal.aborted) return;
     const status2 = err instanceof ApiError ? err.status : 502;
@@ -4654,7 +5808,7 @@ app.post("/api/ai/jobs", (req, res) => {
   const id = crypto.randomUUID();
   const job = { controller: new AbortController(), done: false, status: 200, body: null, createdAt: Date.now() };
   completionJobs.set(id, job);
-  lastEngine = { provider: String(provider), model: String(model || DEFAULT_MODELS[provider] || provider), at: (/* @__PURE__ */ new Date()).toISOString() };
+  lastEngine = { provider: String(provider), model: String(model || DEFAULT_MODELS2[provider] || provider), at: (/* @__PURE__ */ new Date()).toISOString() };
   void (async () => {
     try {
       const grounded = groundOn && typeof groundOn === "object" ? await withInternetSources(messages, groundOn) : messages;
@@ -4664,7 +5818,7 @@ app.post("/api/ai/jobs", (req, res) => {
         job.body = { error: "The AI provider returned an empty response. Try again." };
       } else {
         job.status = 200;
-        job.body = { success: true, text, model: model || DEFAULT_MODELS[provider] };
+        job.body = { success: true, text, model: model || DEFAULT_MODELS2[provider] };
       }
     } catch (err) {
       job.status = err instanceof ApiError ? err.status : 502;
@@ -4802,7 +5956,7 @@ ${String(s.text || "").slice(0, 1200)}`)
     if (!reply) {
       reply = raw.trim();
     }
-    const result = { success: true, reply, modelUsed: body.model || DEFAULT_MODELS[provider] };
+    const result = { success: true, reply, modelUsed: body.model || DEFAULT_MODELS2[provider] };
     if (evidence.length) result.sources = evidence.map((s) => ({ title: s.title, url: s.url }));
     if (parsed && !Array.isArray(parsed)) {
       if (Array.isArray(parsed.reasoningSteps)) {
@@ -4924,12 +6078,12 @@ async function visionVerify(imageUrl, claim, modality, questionContext = {}, pro
     }
     try {
       if (BLIND_CHECK_PROVIDERS.includes(provider)) {
-        const blind = await blindPictureCheck({ provider, model: model || DEFAULT_MODELS[provider], dataUrl, claim, modality });
+        const blind = await blindPictureCheck({ provider, model: model || DEFAULT_MODELS2[provider], dataUrl, claim, modality });
         if (!blind.pass) return { pass: false, reason: blind.reason };
       }
       const text2 = await gatedCompletion({
         provider,
-        model: model || DEFAULT_MODELS[provider],
+        model: model || DEFAULT_MODELS2[provider],
         system: "You are a strict medical-image verifier. Reply with only a JSON object.",
         messages: [{ role: "user", content: instruction }],
         json: true,
@@ -4940,13 +6094,13 @@ async function visionVerify(imageUrl, claim, modality, questionContext = {}, pro
       });
       const verdict2 = parseVisionVerdict(text2);
       const pass2 = verdict2?.pass === true;
-      aiLog({ provider, model: model || DEFAULT_MODELS[provider], route: "images/verify", pass: pass2, text_len: text2.length });
+      aiLog({ provider, model: model || DEFAULT_MODELS2[provider], route: "images/verify", pass: pass2, text_len: text2.length });
       return { pass: pass2, reason: verdict2?.reason || (pass2 ? "Verified." : "Model did not return a complete structured verdict \u2014 image skipped.") };
     } catch (err) {
       return { pass: false, reason: `Vision check failed: ${String(err?.message || err).slice(0, 160)}` };
     }
   }
-  const model_ = model || DEFAULT_MODELS.gemini;
+  const model_ = model || DEFAULT_MODELS2.gemini;
   const payload = JSON.stringify({
     model: model_,
     messages: [
@@ -5124,7 +6278,7 @@ app.post("/api/images/generate-question", async (req, res) => {
   const groundTruth = typeof body.groundTruth === "string" ? body.groundTruth.trim() : "";
   const imageId = typeof body.imageId === "string" ? body.imageId : "";
   const provider = typeof body.provider === "string" ? body.provider : "gemini";
-  const model = typeof body.model === "string" && body.model ? body.model : DEFAULT_MODELS[provider] || DEFAULT_MODELS.gemini;
+  const model = typeof body.model === "string" && body.model ? body.model : DEFAULT_MODELS2[provider] || DEFAULT_MODELS2.gemini;
   if (!imageUrl || !groundTruth) {
     return res.status(400).json({ error: "imageUrl and groundTruth are required." });
   }
@@ -5187,7 +6341,7 @@ function qaComplete(provider, model) {
     const modelOverride = role ? process.env[`QA_MODEL_${role.toUpperCase()}`] : void 0;
     return runCompletion({
       provider,
-      model: modelOverride || model || DEFAULT_MODELS[provider],
+      model: modelOverride || model || DEFAULT_MODELS2[provider],
       system,
       messages,
       json,
@@ -5207,7 +6361,7 @@ app.post("/api/qa/review", async (req, res) => {
   const runLlm = req.body?.runLlm === true;
   const provider = String(req.body?.provider || "").trim();
   if (!provider) return res.status(400).json({ error: "An AI provider must be chosen." });
-  const model = String(req.body?.model || DEFAULT_MODELS[provider] || "");
+  const model = String(req.body?.model || DEFAULT_MODELS2[provider] || "");
   const complete = runLlm ? qaComplete(provider, model) : void 0;
   try {
     const review = await runQaPipeline(question, {
@@ -5238,7 +6392,7 @@ app.post("/api/qa/review-batch", async (req, res) => {
   const runLlm = req.body?.runLlm === true;
   const provider = String(req.body?.provider || "").trim();
   if (!provider) return res.status(400).json({ error: "An AI provider must be chosen." });
-  const model = String(req.body?.model || DEFAULT_MODELS[provider] || "");
+  const model = String(req.body?.model || DEFAULT_MODELS2[provider] || "");
   const complete = runLlm ? qaComplete(provider, model) : void 0;
   const list = questions.slice(0, 200);
   const reviews = new Array(list.length);
@@ -5264,7 +6418,7 @@ app.post("/api/qa/refine-batch", async (req, res) => {
   }
   const provider = String(req.body?.provider || "").trim();
   if (!provider) return res.status(400).json({ error: "An AI provider must be chosen." });
-  const model = String(req.body?.model || DEFAULT_MODELS[provider] || "");
+  const model = String(req.body?.model || DEFAULT_MODELS2[provider] || "");
   const complete = qaComplete(provider, model);
   try {
     const refined = await refineBatch(questions.slice(0, 200), complete);
@@ -5385,7 +6539,7 @@ app.get("/api/providers/status", (req, res) => {
     providers: [
       ...["gemini", "chatgpt", "claude", "grok", "deeprelay"].map((id) => ({
         id,
-        model: DEFAULT_MODELS[id],
+        model: DEFAULT_MODELS2[id],
         connected: isProviderConnected(id)
       })),
       ...customEndpoints.map((e) => ({
@@ -5412,6 +6566,9 @@ app.post("/api/debug/log", (req, res) => {
 });
 async function startServer() {
   const isProd = process.env.NODE_ENV === "production";
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Unknown API route" });
+  });
   if (!isProd) {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -5431,6 +6588,11 @@ async function startServer() {
       res.sendFile(path4.resolve(__dirname, "dist", "index.html"));
     });
   }
+  app.use((err, req, res, next) => {
+    if (!req.path.startsWith("/api") || res.headersSent) return next(err);
+    const status2 = Number(err?.status || err?.statusCode) || 500;
+    res.status(status2).json({ error: err?.type === "entity.parse.failed" ? "Invalid JSON in the request body" : status2 < 500 ? String(err?.message || "Bad request") : "Server error" });
+  });
   const hosts = PHONE_MODE ? ["0.0.0.0", "::1"] : process.env.HOST ? [process.env.HOST] : ["127.0.0.1", "::1"];
   for (const host of hosts) {
     const httpServer = app.listen(PORT, host, () => {

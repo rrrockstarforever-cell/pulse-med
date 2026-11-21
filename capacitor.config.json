@@ -1,0 +1,17 @@
+{
+  "appId": "com.abhijeet.pulsemed.mobile",
+  "appName": "Pulse Med",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css"
+    }
+  }
+}

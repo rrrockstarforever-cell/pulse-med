@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { X, Check } from 'lucide-react';
+import { useBackLayer } from '../lib/backLayers.ts';
 
 export interface TopicPickerModalProps {
   /** Subject / domain the topics belong to (shown in the header). */
@@ -38,6 +39,8 @@ export const TopicPickerModal: React.FC<TopicPickerModalProps> = ({
   const [chosen, setChosen] = useState<string[]>(
     initiallyAll ? [...topics] : subjectPicked ? topics.filter((t) => selected.includes(t)) : [],
   );
+
+  useBackLayer(true, onClose);
 
   const allChecked = useMemo(() => chosen.length === topics.length, [chosen, topics]);
 
@@ -190,7 +193,7 @@ export const TopicPickerModal: React.FC<TopicPickerModalProps> = ({
           </p>
           <button
             onClick={done}
-            className="px-6 py-2 rounded-lg   text-white text-xs font-medium transition-colors shadow-sm"
+            className="px-6 py-2 rounded-lg bg-[#0f8b8d] hover:bg-[#0c7476] text-white text-xs font-medium transition-colors shadow-sm"
           >
             Done
           </button>

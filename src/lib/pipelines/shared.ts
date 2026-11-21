@@ -131,7 +131,10 @@ export function splitStemQuestion(q: ClinicalQuestion): void {
   const stem = String(q.stem ?? '').trim();
   const line = String((q as { questionText?: string }).questionText ?? '').trim();
   if (!/\?\s*$/.test(stem)) return;
-  const m = stem.match(/^(.*?[.!])\s+([^.!?]*\?)\s*$/s);
+  // A full stop after an initial or abbreviation ("H. pylori", "e.g.", "Dr.") is not the end of a sentence.
+  const masked = stem.replace(/\b([A-Za-z]|e\.g|i\.e|vs|Dr|Mr|Mrs|No|St|Fig|approx)\./g, '$1\u0000');
+  const mm = masked.match(/^(.*?[.!])\s+([^.!?]*\?)\s*$/s);
+  const m = mm ? [mm[0], mm[1].replace(/\u0000/g, '.'), mm[2].replace(/\u0000/g, '.')] : null;
   if (!m || m[1].trim().split(/\s+/).length < 6) return;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!line || norm(line) === norm(stem) || norm(line) === norm(m[2])) {
@@ -202,7 +205,7 @@ const ANTONYMS: [RegExp, string][] = [
   [/\b(one|single|several|multiple|many)\b/g, 'NUM'],
   [/\b(aerobic|anaerobic)\b/g, 'AER'],
   [/\b(higher|lower|high|low)\b/g, 'HL'],
-  [/\b(increased|decreased|raised|reduced|elevated)\b/g, 'ID'],
+  [/\b(increased?|decreased?|raised|reduced?|elevated|rise|fall|rises|falls)\b/g, 'ID'],
   [/\b(more|fewer|less)\b/g, 'MF'],
   [/\b(common|rare|uncommon|frequent|infrequent)\b/g, 'CR'],
   [/\b(present|absent)\b/g, 'PA'],
@@ -219,7 +222,7 @@ export function oppositeOptions(q: ClinicalQuestion): boolean {
     for (let j = i + 1; j < opts.length; j++) {
       if (normText(opts[i]) === normText(opts[j])) continue;
       const a = collapse(opts[i]);
-      if (a.split(' ').length >= 2 && a === collapse(opts[j])) return true;
+      if (a === collapse(opts[j]) && (a.split(' ').length >= 2 || /^[A-Z]+$/.test(a))) return true;
     }
   }
   return false;

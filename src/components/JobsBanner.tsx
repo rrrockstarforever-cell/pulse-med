@@ -14,7 +14,7 @@ export const JobsBanner: React.FC = () => {
   const visible = [...running, ...finished.slice(0, 3)];
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] space-y-2">
+    <div className="fixed bottom-24 left-3 right-3 z-50 space-y-2 md:bottom-4 md:left-auto md:right-4 md:w-80">
       <div className="flex items-center justify-between bg-[#001432] text-white rounded-t-xl px-3 py-2 border border-[#13294b] shadow-lg">
         <span className="text-[11px] font-medium uppercase tracking-wider flex items-center gap-1.5">
           <Wrench className="w-3.5 h-3.5 text-[#8ff3f4]" /> Background tasks

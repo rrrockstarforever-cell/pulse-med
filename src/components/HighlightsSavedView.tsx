@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useBackLayer } from '../lib/backLayers.ts';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   Bookmark,
@@ -213,6 +214,7 @@ export const HighlightsSavedView: React.FC<HighlightsSavedViewProps> = ({ onNavi
   const [selectedTag, setSelectedTag] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  useBackLayer(showAddModal, () => setShowAddModal(false));
   const [revealed, setRevealed] = useState<boolean>(false);
   const [ratedNote, setRatedNote] = useState<string | null>(null);
   const [deckIndex, setDeckIndex] = useState<number>(0);

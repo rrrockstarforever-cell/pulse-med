@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { ConnectGate } from './lib/nativeBridge.tsx';
 import './index.css';
 // TEMPORARY SAMPLE: the playful theme is opt-in via localStorage 'pulse-theme' = 'playful'.
 import './theme-playful.css';
@@ -22,4 +23,10 @@ if (import.meta.env.PROD) {
   }
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+// In the Android app the UI is bundled in the APK and the data comes from the PC server; the gate asks for its
+// address and PIN once. In a normal browser it renders the app untouched.
+createRoot(document.getElementById('root')!).render(
+  <ConnectGate>
+    <App />
+  </ConnectGate>,
+);

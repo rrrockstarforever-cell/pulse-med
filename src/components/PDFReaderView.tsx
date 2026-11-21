@@ -10,8 +10,9 @@
 // - OCR matrix (tesseract.js, on-device).
 // No MOCK_PDF_DOCUMENTS, no fake OCR numbers, no dangerouslySetInnerHTML.
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { useBackLayer } from '../lib/backLayers.ts';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import {
   BookOpen,
@@ -56,6 +57,8 @@ import {
   Zap,
   Mic,
   MicOff,
+  Pencil,
+  MoreVertical,
 } from 'lucide-react';
 import { AppView, type ClinicalQuestion } from '../types.ts';
 import { generateChapterMcqs, type YieldLevel } from '../lib/chapterMcq.ts';
@@ -90,6 +93,7 @@ import { createOcrPool, ocrConcurrency, OcrWord } from '../utils/ocr.ts';
 import { startJob, stopJob, type JobControl } from '../utils/jobRegistry.ts';
 import { downloadNotesPdf } from './RevisionNote.tsx';
 import { useVoiceInput } from './useVoiceInput.ts';
+import { VoiceWave } from './VoiceWave.tsx';
 import { runWebCheck, webCheckToText } from '../lib/noteWebCheck.ts';
 import { StructuredNote, PAGE_TRANSCRIBE_SYSTEM, TEACHING_NOTE_SYSTEM, readSavedNotes, teachingNoteToText, toTeachingNote, writeSavedNotes, type SavedNote, type TeachingNote } from './StructuredNote.tsx';
 
@@ -436,7 +440,13 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   const [matchIndex, setMatchIndex] = useState<number>(-1);
   const [indexing, setIndexing] = useState<{ busy: boolean; done: number }>({ busy: false, done: 0 });
 
-  const [showNotes, setShowNotes] = useState<boolean>(true);
+  const isPhone = typeof window !== 'undefined' && window.innerWidth < 768;
+  const [phoneSheet, setPhoneSheet] = useState<'menu' | 'search' | null>(null);
+  const [tocOpenRow, setTocOpenRow] = useState<string | null>(null);
+  const [tocSelect, setTocSelect] = useState<boolean>(false);
+  const [tocMenu, setTocMenu] = useState<boolean>(false);
+  const [tocAddOpen, setTocAddOpen] = useState<boolean>(false);
+  const [showNotes, setShowNotes] = useState<boolean>(!(typeof window !== 'undefined' && window.innerWidth < 768));
   const [showLibrary, setShowLibrary] = useState<boolean>(true);
   const [highlights, setHighlights] = useState<UserHighlight[]>([]);
   const [copied, setCopied] = useState<boolean>(false);
@@ -455,6 +465,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   const [rightTab, setRightTab] = useState<'copilot' | 'highlights' | 'notes' | 'index'>('copilot');
   // The library shelf is the opening page; a book opens the reader, and "Library" returns here.
   const [showShelf, setShowShelf] = useState<boolean>(true);
+  // Phone Back, innermost first: a Book tools / Search sheet, then the Ask AI panel, then the open book -> the library.
+  useBackLayer(isPhone && !showShelf, () => setShowShelf(true));
+  useBackLayer(isPhone && !showShelf && showNotes, () => setShowNotes(false));
+  useBackLayer(isPhone && !showShelf && phoneSheet !== null, () => setPhoneSheet(null));
   const [libQuery, setLibQuery] = useState<string>('');
   const [libResults, setLibResults] = useState<{ docId: string; title: string; page: number; snippet: string }[] | null>(null);
   const [libSearchNote, setLibSearchNote] = useState<string | null>(null);
@@ -501,6 +515,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   // Voice input for the copilot: the transcript is added to the question box.
   const voice = useVoiceInput((text) => setAskInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text)));
   const voiceStatus = voice.status;
+  const voicePartial = voice.partial;
+  const voiceLevels = voice.levels;
   const [askCopied, setAskCopied] = useState<boolean>(false);
   const [askCitations, setAskCitations] = useState<string[]>([]);
   const [askError, setAskError] = useState<string | null>(null);
@@ -2248,7 +2264,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
   ).sort(([a], [b]) => Number(a === 'Uncategorised') - Number(b === 'Uncategorised') || a.localeCompare(b));
 
   const shelfView = (
-    <div className="flex h-[calc(100vh-64px)] flex-col gap-3 overflow-y-auto bg-slate-200/70 p-3 text-slate-800">
+    <div className={`flex h-[calc(100vh-64px)] flex-col gap-3 overflow-y-auto bg-slate-200/70 p-3 text-slate-800 [&>*]:shrink-0 ${isPhone ? 'pb-28' : ''}`}>
       <header className="relative overflow-hidden rounded-[20px] border border-slate-200 bg-white px-4 py-4">
         <div
           aria-hidden
@@ -2267,7 +2283,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
               Your library
             </h2>
             <p className="mt-1.5 text-[13px] leading-[1.7] text-slate-500">
-              {docs.length} book{docs.length === 1 ? '' : 's'} on this computer · grouped by subject
+              {docs.length} book{docs.length === 1 ? '' : 's'} on this {isPhone ? 'phone' : 'computer'} · grouped by subject
             </p>
           </div>
           <button
@@ -2287,10 +2303,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
       >
         <UploadCloud className="h-5 w-5 text-[#00696b]" />
         <p className=" text-[12px] font-semibold text-slate-700">
-          Drop a PDF or DOCX here, or click to choose files
+          {isPhone ? 'Tap to choose a PDF or DOCX' : 'Drop a PDF or DOCX here, or click to choose files'}
         </p>
         <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-slate-400">
-          Stored on this computer only · page count read up front
+          Stored on this {isPhone ? 'phone' : 'computer'} only · page count read up front
         </p>
         {/* The shelf needs its own input: the reader's input is not mounted while the shelf is showing. */}
         <input
@@ -2318,9 +2334,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
               onChange={(e) => setLibQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void runLibrarySearch(); }}
               placeholder="Search all your books"
-              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-[12px]"
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-[12px]"
             />
-            <button onClick={() => void runLibrarySearch()} className={`rounded-lg px-3 py-2 text-[11px] font-medium transition active:scale-95 ${T.cta}`}>
+            <button onClick={() => void runLibrarySearch()} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium transition active:scale-95 ${T.cta}`}>
               Search
             </button>
           </div>
@@ -2445,207 +2461,13 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
 
   if (showShelf) return shelfView;
 
-  return (
-    <div className="flex h-[calc(100vh-64px)] flex-col gap-2 overflow-y-auto p-2 lg:overflow-hidden bg-slate-200/70 text-slate-800">
-      <section className={`shrink-0 rounded-[20px] px-2.5 py-2 ${T.panel}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <button
-              onClick={() => setShowShelf(true)}
-              title="Back to the library"
-              className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition ${T.chip} ${T.softHover}`}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" /> Library
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition active:scale-95 ${T.cta}`}
-              title="Import a PDF or DOCX (stored locally in IndexedDB)"
-            >
-              <UploadCloud className="h-3.5 w-3.5" /> Import
-            </button>
-            {activeDoc && (
-              <button
-                onClick={() => handleDeleteDoc(activeDoc.id)}
-                title="Delete this book from the library"
-                className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition hover:border-rose-300 hover:text-rose-600 ${T.chip}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Delete
-              </button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              multiple
-              className="hidden"
-              onChange={(e) => { handleImportFiles(e.target.files); e.target.value = ''; }}
-            />
-            <div className="min-w-0">
-              <div className={`truncate text-[12px] font-medium ${T.strong}`}>{activeDoc?.title ?? 'No document open'}</div>
-              <div className={`truncate font-mono text-[9px] ${T.dim}`}>
-                {activeDoc
-                  ? `${activeDoc.fileType?.toUpperCase() ?? ''} · ${numPages} pages · ${activeDoc.subject || 'Uncategorised'}`
-                  : 'Import a PDF or DOCX to begin'}
-              </div>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            <span className={`hidden items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[9px] uppercase tracking-wider xl:flex ${T.chip}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${numPages ? 'bg-emerald-500' : 'bg-slate-500'}`} />
-              {numPages ? 'Local engine · ready' : 'Idle'}
-            </span>
-            {numPages > 0 && (
-              <>
-                <span
-                  className={`flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[9px] ${ocrBusy ? T.chipAccent : currentOcr || currentNativeText ? T.chipGood : T.chip}`}
-                  title="OCR status for the current page"
-                >
-                  <ScanText className="h-3 w-3" />
-                  OCR: {ocrBusy
-                    ? `running ${ocrTask ? `${ocrTask.done}/${ocrTask.total}` : ''}`
-                    : currentOcr
-                      ? `ready (${ocrWordsRef.current.size} pp)`
-                      : currentNativeText
-                        ? 'native text'
-                        : 'not scanned'}
-                </span>
-                <div className={`flex min-w-[180px] flex-1 items-center gap-1 rounded-lg border px-2 py-1 sm:flex-none ${T.input}`}>
-                  <Search className={`h-3 w-3 shrink-0 ${T.dim}`} />
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
-                    placeholder="Search this book…"
-                    className="min-w-0 flex-1 bg-transparent text-[11px] focus:outline-none"
-                  />
-                  {indexing.busy ? (
-                    <button onClick={stopSearch} className="flex shrink-0 items-center gap-1 text-[9px] text-amber-600 dark:text-amber-300" title="Stop indexing">
-                      <Loader2 className="h-3 w-3 animate-spin" /> {indexing.done}/{numPages}
-                    </button>
-                  ) : matches.length > 0 ? (
-                    <button onClick={() => moveMatch(1)} className={`shrink-0 font-mono text-[9px] ${T.accent}`} title="Next match">
-                      {matchIndex + 1}/{matches.length}
-                    </button>
-                  ) : null}
-                  <button onClick={() => moveMatch(-1)} disabled={!matches.length} className="p-0.5 disabled:opacity-30" title="Previous match">
-                    <ChevronLeft className="h-3 w-3" />
-                  </button>
-                  <button onClick={() => moveMatch(1)} disabled={!matches.length} className="p-0.5 disabled:opacity-30" title="Next match">
-                    <ChevronRight className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className={`flex items-center gap-1 rounded-lg border px-1.5 py-1 ${T.input}`}>
-                  <button onClick={() => gotoPage(currentPage - 1)} disabled={currentPage <= 1} className="p-0.5 disabled:opacity-30" title="Previous page">
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                  </button>
-                  <input
-                    value={currentPage}
-                    onChange={(e) => { const n = parseInt(e.target.value, 10); if (!Number.isNaN(n)) setCurrentPage(n); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') gotoPage(currentPage); }}
-                    className="w-8 bg-transparent text-center font-mono text-[11px] focus:outline-none"
-                    title="Jump to page"
-                  />
-                  <span className={`font-mono text-[9px] ${T.dim}`}>/ {numPages}</span>
-                  <button onClick={() => gotoPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-0.5 disabled:opacity-30" title="Next page">
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className={`flex items-center gap-1 rounded-lg border px-1.5 py-1 ${T.input}`}>
-                  <button onClick={() => { setFitWidth(false); setScale((s) => Math.max(0.25, +(s - 0.2).toFixed(2))); }} title="Zoom out">
-                    <ZoomOut className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="w-9 text-center font-mono text-[10px]">{Math.round(scale * 100)}%</span>
-                  <button onClick={() => { setFitWidth(false); setScale((s) => Math.min(4, +(s + 0.2).toFixed(2))); }} title="Zoom in">
-                    <ZoomIn className="h-3.5 w-3.5" />
-                  </button>
-                  <button onClick={() => setFitWidth(!fitWidth)} title="Fit width" className={fitWidth ? T.accent : T.dim}>
-                    <Maximize className="h-3.5 w-3.5" />
-                  </button>
-                  <button onClick={() => { setFitWidth(false); setScale(fitPageScale()); }} title="Fit whole page" className={T.dim}>
-                    <Focus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <button
-                  onClick={() => { setRightTab('copilot'); setShowNotes(true); generateMcqs(); }}
-                  disabled={mcqBusy || !getActiveProvider()}
-                  title={getActiveProvider() ? 'Generate MCQs from this page' : 'Connect an AI provider first'}
-                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium disabled:opacity-40 ${getActiveProvider() ? T.cta : T.chip} ${T.softHover}`}
-                >
-                  {mcqBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <GraduationCap className="h-3 w-3" />}
-                  {mcqBusy ? 'Generating…' : mcqs.length ? 'Regenerate MCQs' : 'Generate MCQs'}
-                </button>
-                <button
-                  onClick={() => { setRightTab('copilot'); setShowNotes(true); }}
-                  title="Ask AI about this page"
-                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition ${panelOpen && rightTab === 'copilot' ? T.chipAccent : T.chip} ${T.softHover}`}
-                >
-                  <Sparkles className="h-3 w-3" /> Ask AI
-                </button>
-                <button onClick={printDocument} title="Print" className={`rounded-lg border p-1.5 transition ${T.chip} ${T.softHover}`}>
-                  <Printer className="h-3.5 w-3.5" />
-                </button>
-                <button onClick={downloadDocument} title="Download the original file" className={`rounded-lg border p-1.5 transition ${T.chip} ${T.softHover}`}>
-                  <FileDown className="h-3.5 w-3.5" />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </section>
-      {numPages > 0 && (
-        <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-xl border px-2.5 py-1.5 ${T.panel}`}>
-          <span className={`flex items-center gap-1.5 text-[10px] font-medium ${T.accent}`}>
-            <ScanText className="h-3.5 w-3.5" /> OCR
-          </span>
-          <button
-            onClick={() => runOcr('current')}
-            disabled={ocrBusy || !pdfRef.current}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40 ${T.cta}`}
-          >
-            {ocrBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ScanText className="h-3 w-3" />}
-            OCR current page ({currentPage})
-          </button>
-          <button
-            onClick={() => runOcr('missing')}
-            disabled={ocrBusy || !pdfRef.current}
-            className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40 ${T.chip}`}
-          >
-            <FileDown className="h-3 w-3" /> OCR pages without text
-          </button>
-          {ocrBusy && (
-            <button
-              onClick={() => { if (ocrJobRef.current) stopJob(ocrJobRef.current.id); }}
-              className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300"
-            >
-              <Square className="h-3 w-3" /> Stop OCR
-            </button>
-          )}
-          <label className={`inline-flex items-center gap-1.5 text-[10px] font-semibold ${T.muted}`}>
-            <input type="checkbox" checked={ocrForce} onChange={(e) => setOcrForce(e.target.checked)} className="accent-[#0f8b8d]" />
-            Force OCR even where text exists
-          </label>
-          {ocrNote && <span className={`min-w-0 text-[10px] ${T.muted}`}>{ocrNote}</span>}
-          {!pdfRef.current && <span className="text-[10px] text-amber-600 dark:text-amber-300">OCR needs a PDF. DOCX already has real text.</span>}
-          <span className={`ml-auto hidden font-mono text-[9px] ${T.dim} 2xl:inline`}>
-            tesseract.js · English · on-device · pages run one after another · lossy, review the text
-          </span>
-        </div>
-      )}
-      {(libraryError || docOpenError) && (
-        <div className="flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300">
-          <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-          <span className="flex-1">{libraryError || docOpenError}</span>
-          <button onClick={() => { setLibraryError(null); setDocOpenError(null); }}><X className="h-3.5 w-3.5" /></button>
-        </div>
-      )}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-12">
+  const readerArticle = (
         <article
           className={`flex min-h-0 flex-col overflow-hidden rounded-xl border ${T.panel} ${
-            immersive ? 'fixed inset-0 z-50 rounded-none border-0' : panelOpen && numPages > 0 ? 'lg:col-span-7' : 'lg:col-span-12'
+            isPhone ? 'flex-1 rounded-none border-0' : immersive ? 'fixed inset-0 z-50 rounded-none border-0' : panelOpen && numPages > 0 ? 'lg:col-span-7' : 'lg:col-span-12'
           }`}
         >
-          <header className={`flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-2.5 py-1.5 ${T.divider}`}>
+          <header className={`${isPhone ? 'hidden' : 'flex'} shrink-0 flex-wrap items-center justify-between gap-2 border-b px-2.5 py-1.5 ${T.divider}`}>
             <div className="flex min-w-0 items-center gap-2">
               <BookOpen className={`h-4 w-4 shrink-0 ${T.accent}`} />
               <div className="min-w-0">
@@ -3029,8 +2851,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
             </div>
           )}
         </article>
+  );
 
-        {panelOpen && numPages > 0 && (
+  const sidePanel = (
           <section className={`flex min-h-0 flex-col overflow-hidden rounded-xl border lg:col-span-5 ${T.panel}`}>
             <header className={`flex shrink-0 items-center justify-between gap-2 border-b px-2 py-1.5 ${T.divider}`}>
               <div className="flex items-center gap-1">
@@ -3220,7 +3043,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
               const pageChip = (e: ContentEntry) => (
                 <button
                   onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); gotoPage(e.page); }}
-                  className="shrink-0 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-600 transition hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]"
+                  className={`shrink-0 rounded-md border border-slate-200 bg-white font-mono text-slate-600 transition hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b] ${isPhone ? 'px-2.5 py-1.5 text-[12px]' : 'px-1.5 py-0.5 text-[10px]'}`}
                 >
                   {e.page}
                 </button>
@@ -3229,7 +3052,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                 <button
                   onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); removeEntry(e.id); }}
                   title="Remove"
-                  className={`shrink-0 text-[14px] leading-none opacity-0 transition group-hover:opacity-100 ${T.dim} hover:text-rose-500`}
+                  className={`shrink-0 text-[18px] leading-none transition ${isPhone ? 'px-1 opacity-60' : 'opacity-0 group-hover:opacity-100'} ${T.dim} hover:text-rose-500`}
                 >
                   ×
                 </button>
@@ -3257,7 +3080,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                   }}
                   disabled={notesBusy || batchBusy}
                   title={`Make notes from ${LEVEL_LABEL[e.level].toLowerCase()} "${e.title}"`}
-                  className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-40 ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
+                  className={`flex shrink-0 items-center gap-1 rounded-md border font-semibold transition disabled:opacity-40 ${isPhone ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'} ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
                 >
                   <NotebookPen className="h-3 w-3" /> Notes
                 </button>
@@ -3288,7 +3111,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                   }}
                   disabled={chapterMcqBusy || notesBusy || batchBusy}
                   title={`Make MCQs from the pages of ${LEVEL_LABEL[e.level].toLowerCase()} "${e.title}"`}
-                  className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-40 ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
+                  className={`flex shrink-0 items-center gap-1 rounded-md border font-semibold transition disabled:opacity-40 ${isPhone ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'} ${T.chip} hover:border-[#0f8b8d]/40 hover:bg-teal-50 hover:text-[#00696b]`}
                 >
                   <ListChecks className="h-3 w-3" /> MCQs
                 </button>
@@ -3297,6 +3120,26 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
               const renderNode = (node: ContentNode): React.ReactNode => {
                 const { entry: e, children } = node;
                 if (!children.length) {
+                  if (isPhone) {
+                    return (
+                      <li key={e.id}>
+                        <div className="flex items-end gap-1.5 py-1">
+                          {tocSelect && <span className="mb-[3px] self-end">{pickBox(e)}</span>}
+                          <button onClick={() => gotoPage(e.page)} className={`toc-bare min-w-0 text-left leading-snug ${styleOf[e.level]}`}>{e.title}</button>
+                          <span className="mb-1 min-w-[10px] flex-1 border-b border-dotted border-slate-400/50" />
+                          <button onClick={() => gotoPage(e.page)} className="toc-bare shrink-0 font-mono text-[12px] text-slate-500">{e.page}</button>
+                          <button aria-label="Notes, questions, remove" onClick={() => setTocOpenRow((r) => (r === e.id ? null : e.id))} className="toc-bare shrink-0 text-[16px] leading-none text-slate-400">⋯</button>
+                        </div>
+                        {tocOpenRow === e.id && (
+                          <div className="toc-actions flex flex-wrap items-center gap-2 pb-2 pl-1">
+                            {notesButton(e)}
+                            {mcqButton(e)}
+                            {removeButton(e)}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  }
                   return (
                     <li
                       key={e.id}
@@ -3320,6 +3163,25 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                 return (
                   <li key={e.id} className="group">
                     <details open={e.level === 'unit' || e.level === 'chapter'} className="group">
+                      {isPhone ? (
+                        <summary className="toc-sum cursor-pointer list-none">
+                          <div className="flex items-end gap-1.5 py-1">
+                            {tocSelect && <span className="mb-[3px] self-end">{pickBox(e)}</span>}
+                            <span className={`mb-0.5 text-[8px] ${T.dim} transition-transform group-open:rotate-90`}>▶</span>
+                            <span className={`min-w-0 leading-snug ${styleOf[e.level]}`}>{e.title}</span>
+                            <span className="mb-1 min-w-[10px] flex-1 border-b border-dotted border-slate-400/50" />
+                            <button onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); gotoPage(e.page); }} className="toc-bare shrink-0 font-mono text-[12px] text-slate-500">{e.page}</button>
+                            <button aria-label="Notes, questions, remove" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); setTocOpenRow((r) => (r === e.id ? null : e.id)); }} className="toc-bare shrink-0 text-[16px] leading-none text-slate-400">⋯</button>
+                          </div>
+                          {tocOpenRow === e.id && (
+                            <div className="toc-actions flex flex-wrap items-center gap-2 pb-2 pl-1" onClick={(ev) => ev.stopPropagation()}>
+                              {notesButton(e)}
+                              {mcqButton(e)}
+                              {removeButton(e)}
+                            </div>
+                          )}
+                        </summary>
+                      ) : (
                       <summary className="flex cursor-pointer list-none items-center gap-2 py-1">
                         {pickBox(e)}
                         <span className={`text-[9px] text-slate-400 transition-transform group-open:rotate-90 ${T.dim}`}>▶</span>
@@ -3330,7 +3192,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                         {mcqButton(e)}
                         {removeButton(e)}
                       </summary>
-                      <ul className="ml-2 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">{children.map(renderNode)}</ul>
+                      )}
+                      <ul className={`ml-2 mt-0.5 border-l border-slate-200 pl-3 ${isPhone ? '' : 'space-y-0.5'}`}>{children.map(renderNode)}</ul>
                     </details>
                   </li>
                 );
@@ -3342,6 +3205,87 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                 ]);
               return (
                 <div className="flex min-h-0 flex-1 flex-col">
+                  {isPhone ? (
+                    <div className={`relative shrink-0 border-b px-2.5 py-2 ${T.divider}`}>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={buildIndexFromBook}
+                          disabled={!!scanning || !pdfRef.current}
+                          className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium disabled:opacity-40 ${T.cta}`}
+                        >
+                          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListTree className="h-3.5 w-3.5" />}
+                          {scanning ? `${scanning.done}/${scanning.total}` : 'Scan book'}
+                        </button>
+                        <span className={`min-w-0 flex-1 truncate text-[11px] ${T.muted}`}>{bookContents.length ? `${bookContents.length} entries` : 'No contents yet'}</span>
+                        <button
+                          onClick={() => setTocSelect((v) => !v)}
+                          className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[12px] font-medium ${tocSelect ? T.chipAccent : T.chip}`}
+                        >
+                          {tocSelect ? 'Done' : 'Select'}
+                        </button>
+                        <button aria-label="More contents options" onClick={() => setTocMenu((v) => !v)} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-[16px] leading-none ${T.chip}`}>⋯</button>
+                      </div>
+                      {tocMenu && (
+                        <div className="absolute right-2.5 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white text-[13px] text-slate-800 shadow-xl">
+                          <button
+                            onClick={() => { setTocMenu(false); void importFromBookmarks(); }}
+                            disabled={!!scanning || !pdfRef.current}
+                            className="block w-full px-3 py-2.5 text-left disabled:opacity-40 active:bg-slate-50"
+                          >Import from PDF bookmarks</button>
+                          {tree.length > 0 && (
+                            <button
+                              onClick={() => { setTocMenu(false); downloadNotesPdf(`${activeDoc?.title ?? 'Book'} — contents`, flatten(tree).join('\n')); }}
+                              className="block w-full border-t border-slate-100 px-3 py-2.5 text-left active:bg-slate-50"
+                            >Download contents</button>
+                          )}
+                          <button
+                            onClick={() => { setTocMenu(false); setTocAddOpen((v) => !v); }}
+                            className="block w-full border-t border-slate-100 px-3 py-2.5 text-left active:bg-slate-50"
+                          >{tocAddOpen ? 'Hide add-entry row' : 'Add an entry by hand'}</button>
+                        </div>
+                      )}
+                      {scanning && (
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-200">
+                          <div className="h-full bg-[#0f8b8d] transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      )}
+                      {contentsNote && <p className={`mt-1.5 text-[10px] leading-snug ${T.muted}`}>{contentsNote}</p>}
+                      {tocAddOpen && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <select
+                            value={newEntry.level}
+                            onChange={(e) => setNewEntry((n) => ({ ...n, level: e.target.value as ContentLevel }))}
+                            className={`w-[84px] shrink-0 ${field}`}
+                          >
+                            <option value="unit">Unit</option>
+                            <option value="chapter">Chapter</option>
+                            <option value="section">Section</option>
+                            <option value="topic">Topic</option>
+                          </select>
+                          <input
+                            value={newEntry.title}
+                            onChange={(e) => setNewEntry((n) => ({ ...n, title: e.target.value }))}
+                            placeholder="Title"
+                            className={`min-w-0 flex-1 ${field}`}
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            max={numPages}
+                            value={newEntry.page}
+                            onChange={(e) => setNewEntry((n) => ({ ...n, page: e.target.value }))}
+                            placeholder="Pg"
+                            className={`w-14 shrink-0 ${field}`}
+                          />
+                          <button
+                            onClick={() => { addEntry(newEntry.level, newEntry.title, addPage); setNewEntry((n) => ({ ...n, title: '', page: '' })); }}
+                            disabled={!canAdd}
+                            className={`shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-medium disabled:opacity-40 ${T.cta}`}
+                          >Add</button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
                   <div className={`shrink-0 space-y-2.5 border-b p-2.5 ${T.divider}`}>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
@@ -3412,6 +3356,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                       Add to contents
                     </button>
                   </div>
+                  )}
 
                   {(pickedEntries.size > 0 || batchBusy) && (() => {
                     const ranges = pickedRanges();
@@ -3420,6 +3365,47 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                     const choice = `flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40`;
                     return (
                       <div className={`shrink-0 space-y-2 border-b px-3 py-2.5 ${T.divider}`} data-testid="chapter-pick-bar">
+                        {isPhone && (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className={`min-w-0 flex-1 truncate text-[12px] font-semibold ${T.strong}`}>
+                                {ranges.length} selected · {pageTotal} pages
+                              </span>
+                              <select
+                                aria-label="MCQ coverage"
+                                value={yieldLevel}
+                                onChange={(e) => setYieldLevel(e.target.value as YieldLevel)}
+                                className={`shrink-0 rounded-lg border px-2 py-1 text-[12px] ${T.input}`}
+                              >
+                                <option value="all">All points</option>
+                                <option value="high">High-yield</option>
+                                <option value="low">Low-yield</option>
+                              </select>
+                              <button onClick={() => setPickedEntries(new Set())} disabled={busy} className={`shrink-0 text-[12px] underline disabled:opacity-40 ${T.muted}`}>Clear</button>
+                            </div>
+                            <div className="toc-actions flex items-center gap-2">
+                              <button onClick={() => void runPickedChapters('notes')} disabled={busy || !ranges.length} className={`flex flex-1 items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-[12px] font-medium disabled:opacity-40 ${T.chip}`}>
+                                <NotebookPen className="h-3.5 w-3.5" /> Notes
+                              </button>
+                              <button onClick={() => void runPickedChapters('mcq')} disabled={busy || !ranges.length} className={`flex flex-1 items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-[12px] font-medium disabled:opacity-40 ${T.chip}`}>
+                                <ListChecks className="h-3.5 w-3.5" /> MCQs
+                              </button>
+                              <button onClick={() => void runPickedChapters('both')} disabled={busy || !ranges.length} className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-medium disabled:opacity-40 ${T.cta}`}>
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Both
+                              </button>
+                              {busy && (
+                                <button
+                                  onClick={() => { batchCancelRef.current = true; notesCancelRef.current = true; mcqCancelRef.current = true; }}
+                                  className="flex shrink-0 items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2 py-1.5 text-[12px] font-medium text-rose-700"
+                                >
+                                  <Square className="h-3.5 w-3.5" /> Stop
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                        {!isPhone && (
+                        <>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`text-[11px] font-semibold ${T.strong}`}>
                             {ranges.length} chapter{ranges.length === 1 ? '' : 's'} selected · {pageTotal} pages
@@ -3459,6 +3445,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                             </button>
                           )}
                         </div>
+                        </>
+                        )}
                         {(batchStatus || mcqStatus) && <p className={`whitespace-pre-line rounded border px-2 py-1 text-[10px] ${T.chip}`}>{batchBusy ? [batchStatus, mcqStatus].filter(Boolean).join(' — ') : batchStatus}</p>}
                         {mcqError && <p className={`rounded border px-2 py-1 text-[10px] ${T.chipWarn}`}>{mcqError}</p>}
                         {notesError && <p className={`rounded border px-2 py-1 text-[10px] ${T.chipWarn}`}>{notesError}</p>}
@@ -3742,6 +3730,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
                     {askBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
                   </button>
                 </div>
+                <VoiceWave levels={voiceLevels} partial={voicePartial} active={voice.recording} />
                 {voiceStatus && (
                   <p className={`mt-1 px-1 text-[10px] ${voice.recording ? 'text-rose-700' : T.muted}`}>{voiceStatus}</p>
                 )}
@@ -3750,7 +3739,383 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onNavigate, darkMo
           </div>
             )}
           </section>
+  );
+
+  // ----------------------------------------------------------------------------------------------------------------
+  // PHONE LAYOUT (screens narrower than 768 px: the Android app). One full-screen reader: a slim top bar, the page
+  // taking all the room, one bottom bar for paging and zoom, and bottom sheets for everything else (menu, search,
+  // Ask AI). The PC layout below is not touched.
+  // ----------------------------------------------------------------------------------------------------------------
+  const phoneBtn = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-700 active:bg-slate-200/70 disabled:opacity-30';
+  const sheetFrame = (title: string, onClose: () => void, body: React.ReactNode) => (
+    <div className="fixed inset-0 z-[70] flex items-end bg-black/40" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[85dvh] w-full overflow-y-auto rounded-t-2xl bg-white pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl"
+      >
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-2.5">
+          <span className="text-[14px] font-semibold text-slate-900">{title}</span>
+          <button aria-label="Close" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 active:bg-slate-100"><X className="h-4 w-4" /></button>
+        </div>
+        {body}
+      </div>
+    </div>
+  );
+  const menuRow = (icon: React.ReactNode, label: string, onClick: () => void, opts?: { danger?: boolean; disabled?: boolean; hint?: string }) => (
+    <button
+      onClick={onClick}
+      disabled={opts?.disabled}
+      className={`flex min-h-[48px] w-full items-center gap-3 px-4 text-left text-[14px] disabled:opacity-40 active:bg-slate-50 ${opts?.danger ? 'text-rose-600' : 'text-slate-800'}`}
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {opts?.hint && <span className="block truncate text-[11px] text-slate-500">{opts.hint}</span>}
+      </span>
+    </button>
+  );
+  if (isPhone) {
+    return (
+      <div className="fixed inset-0 z-[55] flex flex-col bg-slate-100 text-slate-800">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          multiple
+          className="hidden"
+          onChange={(e) => { handleImportFiles(e.target.files); e.target.value = ''; }}
+        />
+        <div className="flex h-12 shrink-0 items-center gap-0.5 border-b border-slate-200 bg-white px-1">
+          <button aria-label="Back to the library" onClick={() => setShowShelf(true)} className={phoneBtn}><ChevronLeft className="h-5 w-5" /></button>
+          <div className="min-w-0 flex-1 px-1">
+            <div className="truncate text-[13px] font-semibold leading-tight text-slate-900">{activeDoc?.title ?? 'No document open'}</div>
+            <div className="truncate text-[11px] leading-tight text-slate-500">
+              {numPages ? `Page ${currentPage} of ${numPages}` : 'Open a book from the library'}
+              {ocrBusy ? ` · reading text${ocrTask ? ` ${ocrTask.done}/${ocrTask.total}` : ''}` : ''}
+            </div>
+          </div>
+          {numPages > 0 && (
+            <>
+              <button aria-label="Search this book" onClick={() => setPhoneSheet('search')} className={phoneBtn}><Search className="h-[18px] w-[18px]" /></button>
+              <button aria-label="Ask AI about this page" onClick={() => { setRightTab('copilot'); setShowNotes(true); }} className={phoneBtn}><Sparkles className="h-[18px] w-[18px] text-[#0f8b8d]" /></button>
+            </>
+          )}
+          <button aria-label="More" onClick={() => setPhoneSheet('menu')} className={phoneBtn}><MoreVertical className="h-5 w-5" /></button>
+        </div>
+        {(libraryError || docOpenError) && (
+          <div className="flex shrink-0 items-center gap-2 border-b border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-800">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+            <span className="min-w-0 flex-1">{libraryError || docOpenError}</span>
+            <button aria-label="Dismiss" onClick={() => { setLibraryError(null); setDocOpenError(null); }}><X className="h-4 w-4" /></button>
+          </div>
         )}
+        <div className="flex min-h-0 flex-1 flex-col">{readerArticle}</div>
+        {numPages > 0 && (
+          <div className="flex h-14 shrink-0 items-center justify-between gap-1 border-t border-slate-200 bg-white px-1.5 pb-[env(safe-area-inset-bottom)] box-content">
+            <div className="flex items-center">
+              <button aria-label="Previous page" onClick={() => gotoPage(currentPage - 1)} disabled={currentPage <= 1} className={phoneBtn}><ChevronLeft className="h-5 w-5" /></button>
+              <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 px-1.5 py-1 font-mono text-[12px]">
+                <input
+                  aria-label="Page number"
+                  inputMode="numeric"
+                  value={currentPage}
+                  onChange={(e) => { const n = parseInt(e.target.value, 10); if (!Number.isNaN(n)) setCurrentPage(n); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') gotoPage(currentPage); }}
+                  onBlur={() => gotoPage(currentPage)}
+                  className="w-9 bg-transparent text-center focus:outline-none"
+                />
+                <span className="text-slate-500">/ {numPages}</span>
+              </div>
+              <button aria-label="Next page" onClick={() => gotoPage(currentPage + 1)} disabled={currentPage >= numPages} className={phoneBtn}><ChevronRight className="h-5 w-5" /></button>
+            </div>
+            <div className="flex items-center">
+              <button aria-label="Zoom out" onClick={() => { setFitWidth(false); setScale((s) => Math.max(0.25, +(s - 0.2).toFixed(2))); }} className={phoneBtn}><ZoomOut className="h-[18px] w-[18px]" /></button>
+              <button aria-label="Zoom in" onClick={() => { setFitWidth(false); setScale((s) => Math.min(4, +(s + 0.2).toFixed(2))); }} className={phoneBtn}><ZoomIn className="h-[18px] w-[18px]" /></button>
+              <button aria-label="Fit page to width" onClick={() => setFitWidth(true)} className={`${phoneBtn} ${fitWidth ? 'text-[#0f8b8d]' : ''}`}><Maximize className="h-[18px] w-[18px]" /></button>
+            </div>
+          </div>
+        )}
+
+        {phoneSheet === 'menu' && sheetFrame('Book tools', () => setPhoneSheet(null), (
+          <div className="pb-2">
+            {menuRow(<UploadCloud className="h-5 w-5" />, 'Import a PDF or DOCX', () => { setPhoneSheet(null); fileInputRef.current?.click(); })}
+            {menuRow(<BookOpen className="h-5 w-5" />, 'Back to the library', () => { setPhoneSheet(null); setShowShelf(true); })}
+            {numPages > 0 && (
+              <>
+                {menuRow(<LayoutGrid className="h-5 w-5" />, showThumbs ? 'Hide page thumbnails' : 'Show page thumbnails', () => { setShowThumbs((v) => !v); setPhoneSheet(null); })}
+                {menuRow(<Pencil className="h-5 w-5" />, 'Change subject', () => { setPhoneSheet(null); void editSubject(); }, { hint: activeDoc?.subject || 'Uncategorised' })}
+                <div className="mx-4 my-1 border-t border-slate-100" />
+                <div className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Read text from pictures (OCR)</div>
+                {menuRow(
+                  ocrBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ScanText className="h-5 w-5" />,
+                  `Read this page (page ${currentPage})`,
+                  () => { setPhoneSheet(null); void runOcr('current'); },
+                  { disabled: ocrBusy || !pdfRef.current, hint: 'Works on the phone itself, no internet needed' },
+                )}
+                {menuRow(<FileDown className="h-5 w-5" />, 'Read all pages that have no text', () => { setPhoneSheet(null); void runOcr('missing'); }, { disabled: ocrBusy || !pdfRef.current })}
+                {ocrBusy && menuRow(<Square className="h-5 w-5" />, 'Stop reading', () => { if (ocrJobRef.current) stopJob(ocrJobRef.current.id); setPhoneSheet(null); }, { danger: true })}
+                <label className="flex min-h-[48px] w-full items-center gap-3 px-4 text-[14px] text-slate-800">
+                  <input type="checkbox" checked={ocrForce} onChange={(e) => setOcrForce(e.target.checked)} className="h-5 w-5 accent-[#0f8b8d]" />
+                  <span>Read again even where text exists</span>
+                </label>
+                {ocrNote && <p className="px-4 pb-2 text-[12px] text-slate-500">{ocrNote}</p>}
+                {!pdfRef.current && <p className="px-4 pb-2 text-[12px] text-amber-600">OCR needs a PDF. A DOCX already has real text.</p>}
+                <div className="mx-4 my-1 border-t border-slate-100" />
+                {menuRow(
+                  mcqBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <GraduationCap className="h-5 w-5" />,
+                  mcqBusy ? 'Making questions…' : mcqs.length ? 'Make new questions from this page' : 'Make questions from this page',
+                  () => { setPhoneSheet(null); setRightTab('copilot'); setShowNotes(true); void generateMcqs(); },
+                  { disabled: mcqBusy || !getActiveProvider(), hint: getActiveProvider() ? undefined : 'Connect an AI provider first' },
+                )}
+                {menuRow(<Printer className="h-5 w-5" />, 'Print', () => { setPhoneSheet(null); void printDocument(); })}
+                {menuRow(<FileDown className="h-5 w-5" />, 'Download the original file', () => { setPhoneSheet(null); void downloadDocument(); })}
+                {activeDoc && menuRow(<Trash2 className="h-5 w-5" />, 'Delete this book', () => { setPhoneSheet(null); void handleDeleteDoc(activeDoc.id); }, { danger: true })}
+              </>
+            )}
+          </div>
+        ))}
+
+        {phoneSheet === 'search' && sheetFrame('Search this book', () => setPhoneSheet(null), (
+          <div className="p-4">
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" />
+              <input
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(); }}
+                placeholder="Type a word and press Search"
+                className="min-w-0 flex-1 bg-transparent text-[15px] focus:outline-none"
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button onClick={() => void runSearch()} className={`flex min-h-[44px] flex-1 items-center justify-center rounded-xl px-4 text-[14px] font-medium ${T.cta}`}>Search</button>
+              <button aria-label="Previous match" onClick={() => moveMatch(-1)} disabled={!matches.length} className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 disabled:opacity-30"><ChevronLeft className="h-5 w-5" /></button>
+              <button aria-label="Next match" onClick={() => moveMatch(1)} disabled={!matches.length} className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 disabled:opacity-30"><ChevronRight className="h-5 w-5" /></button>
+            </div>
+            <p className="mt-3 text-[13px] text-slate-600">
+              {indexing.busy
+                ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Reading pages {indexing.done} / {numPages} <button onClick={stopSearch} className="ml-2 text-amber-600 underline">Stop</button></span>
+                : matches.length > 0
+                  ? `Match ${matchIndex + 1} of ${matches.length}`
+                  : searchQuery ? 'No matches yet. Press Search.' : 'Search looks through every page of this book.'}
+            </p>
+          </div>
+        ))}
+
+        {panelOpen && numPages > 0 && (
+          <div className="fixed inset-0 z-[70] flex items-end bg-black/40" onClick={() => setShowNotes(false)}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex h-[84dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl [&>section]:h-full [&>section]:rounded-none [&>section]:border-0"
+            >
+              {sidePanel}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="flex h-[calc(100vh-64px)] flex-col gap-2 overflow-y-auto p-2 lg:overflow-hidden bg-slate-200/70 text-slate-800">
+      <section className={`shrink-0 rounded-[20px] px-2.5 py-2 ${T.panel}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <button
+              onClick={() => setShowShelf(true)}
+              title="Back to the library"
+              className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition ${T.chip} ${T.softHover}`}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> Library
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition active:scale-95 ${T.cta}`}
+              title="Import a PDF or DOCX (stored locally in IndexedDB)"
+            >
+              <UploadCloud className="h-3.5 w-3.5" /> Import
+            </button>
+            {activeDoc && (
+              <button
+                onClick={() => handleDeleteDoc(activeDoc.id)}
+                title="Delete this book from the library"
+                className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition hover:border-rose-300 hover:text-rose-600 ${T.chip}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              multiple
+              className="hidden"
+              onChange={(e) => { handleImportFiles(e.target.files); e.target.value = ''; }}
+            />
+            <div className="min-w-0">
+              <div className={`truncate text-[12px] font-medium ${T.strong}`}>{activeDoc?.title ?? 'No document open'}</div>
+              <div className={`truncate font-mono text-[9px] ${T.dim}`}>
+                {activeDoc
+                  ? `${activeDoc.fileType?.toUpperCase() ?? ''} · ${numPages} pages · ${activeDoc.subject || 'Uncategorised'}`
+                  : 'Import a PDF or DOCX to begin'}
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <span className={`hidden items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[9px] uppercase tracking-wider xl:flex ${T.chip}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${numPages ? 'bg-emerald-500' : 'bg-slate-500'}`} />
+              {numPages ? 'Local engine · ready' : 'Idle'}
+            </span>
+            {numPages > 0 && (
+              <>
+                <span
+                  className={`flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[9px] ${ocrBusy ? T.chipAccent : currentOcr || currentNativeText ? T.chipGood : T.chip}`}
+                  title="OCR status for the current page"
+                >
+                  <ScanText className="h-3 w-3" />
+                  OCR: {ocrBusy
+                    ? `running ${ocrTask ? `${ocrTask.done}/${ocrTask.total}` : ''}`
+                    : currentOcr
+                      ? `ready (${ocrWordsRef.current.size} pp)`
+                      : currentNativeText
+                        ? 'native text'
+                        : 'not scanned'}
+                </span>
+                <div className={`flex min-w-[180px] flex-1 items-center gap-1 rounded-lg border px-2 py-1 sm:flex-none ${T.input}`}>
+                  <Search className={`h-3 w-3 shrink-0 ${T.dim}`} />
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
+                    placeholder="Search this book…"
+                    className="min-w-0 flex-1 bg-transparent text-[11px] focus:outline-none"
+                  />
+                  {indexing.busy ? (
+                    <button onClick={stopSearch} className="flex shrink-0 items-center gap-1 text-[9px] text-amber-600 dark:text-amber-300" title="Stop indexing">
+                      <Loader2 className="h-3 w-3 animate-spin" /> {indexing.done}/{numPages}
+                    </button>
+                  ) : matches.length > 0 ? (
+                    <button onClick={() => moveMatch(1)} className={`shrink-0 font-mono text-[9px] ${T.accent}`} title="Next match">
+                      {matchIndex + 1}/{matches.length}
+                    </button>
+                  ) : null}
+                  <button onClick={() => moveMatch(-1)} disabled={!matches.length} className="p-0.5 disabled:opacity-30" title="Previous match">
+                    <ChevronLeft className="h-3 w-3" />
+                  </button>
+                  <button onClick={() => moveMatch(1)} disabled={!matches.length} className="p-0.5 disabled:opacity-30" title="Next match">
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className={`flex items-center gap-1 rounded-lg border px-1.5 py-1 ${T.input}`}>
+                  <button onClick={() => gotoPage(currentPage - 1)} disabled={currentPage <= 1} className="p-0.5 disabled:opacity-30" title="Previous page">
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <input
+                    value={currentPage}
+                    onChange={(e) => { const n = parseInt(e.target.value, 10); if (!Number.isNaN(n)) setCurrentPage(n); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') gotoPage(currentPage); }}
+                    className="w-8 bg-transparent text-center font-mono text-[11px] focus:outline-none"
+                    title="Jump to page"
+                  />
+                  <span className={`font-mono text-[9px] ${T.dim}`}>/ {numPages}</span>
+                  <button onClick={() => gotoPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-0.5 disabled:opacity-30" title="Next page">
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className={`flex items-center gap-1 rounded-lg border px-1.5 py-1 ${T.input}`}>
+                  <button onClick={() => { setFitWidth(false); setScale((s) => Math.max(0.25, +(s - 0.2).toFixed(2))); }} title="Zoom out">
+                    <ZoomOut className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="w-9 text-center font-mono text-[10px]">{Math.round(scale * 100)}%</span>
+                  <button onClick={() => { setFitWidth(false); setScale((s) => Math.min(4, +(s + 0.2).toFixed(2))); }} title="Zoom in">
+                    <ZoomIn className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => setFitWidth(!fitWidth)} title="Fit width" className={fitWidth ? T.accent : T.dim}>
+                    <Maximize className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => { setFitWidth(false); setScale(fitPageScale()); }} title="Fit whole page" className={T.dim}>
+                    <Focus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => { setRightTab('copilot'); setShowNotes(true); generateMcqs(); }}
+                  disabled={mcqBusy || !getActiveProvider()}
+                  title={getActiveProvider() ? 'Generate MCQs from this page' : 'Connect an AI provider first'}
+                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium disabled:opacity-40 ${getActiveProvider() ? T.cta : T.chip} ${T.softHover}`}
+                >
+                  {mcqBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <GraduationCap className="h-3 w-3" />}
+                  {mcqBusy ? 'Generating…' : mcqs.length ? 'Regenerate MCQs' : 'Generate MCQs'}
+                </button>
+                <button
+                  onClick={() => { setRightTab('copilot'); setShowNotes(true); }}
+                  title="Ask AI about this page"
+                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition ${panelOpen && rightTab === 'copilot' ? T.chipAccent : T.chip} ${T.softHover}`}
+                >
+                  <Sparkles className="h-3 w-3" /> Ask AI
+                </button>
+                <button onClick={printDocument} title="Print" className={`rounded-lg border p-1.5 transition ${T.chip} ${T.softHover}`}>
+                  <Printer className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={downloadDocument} title="Download the original file" className={`rounded-lg border p-1.5 transition ${T.chip} ${T.softHover}`}>
+                  <FileDown className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+      {numPages > 0 && (
+        <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-xl border px-2.5 py-1.5 ${T.panel}`}>
+          <span className={`flex items-center gap-1.5 text-[10px] font-medium ${T.accent}`}>
+            <ScanText className="h-3.5 w-3.5" /> OCR
+          </span>
+          <button
+            onClick={() => runOcr('current')}
+            disabled={ocrBusy || !pdfRef.current}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40 ${T.cta}`}
+          >
+            {ocrBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ScanText className="h-3 w-3" />}
+            OCR current page ({currentPage})
+          </button>
+          <button
+            onClick={() => runOcr('missing')}
+            disabled={ocrBusy || !pdfRef.current}
+            className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium disabled:opacity-40 ${T.chip}`}
+          >
+            <FileDown className="h-3 w-3" /> OCR pages without text
+          </button>
+          {ocrBusy && (
+            <button
+              onClick={() => { if (ocrJobRef.current) stopJob(ocrJobRef.current.id); }}
+              className="flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300"
+            >
+              <Square className="h-3 w-3" /> Stop OCR
+            </button>
+          )}
+          <label className={`inline-flex items-center gap-1.5 text-[10px] font-semibold ${T.muted}`}>
+            <input type="checkbox" checked={ocrForce} onChange={(e) => setOcrForce(e.target.checked)} className="accent-[#0f8b8d]" />
+            Force OCR even where text exists
+          </label>
+          {ocrNote && <span className={`min-w-0 text-[10px] ${T.muted}`}>{ocrNote}</span>}
+          {!pdfRef.current && <span className="text-[10px] text-amber-600 dark:text-amber-300">OCR needs a PDF. DOCX already has real text.</span>}
+          <span className={`ml-auto hidden font-mono text-[9px] ${T.dim} 2xl:inline`}>
+            tesseract.js · English · on-device · pages run one after another · lossy, review the text
+          </span>
+        </div>
+      )}
+      {(libraryError || docOpenError) && (
+        <div className="flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300">
+          <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+          <span className="flex-1">{libraryError || docOpenError}</span>
+          <button onClick={() => { setLibraryError(null); setDocOpenError(null); }}><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-12">
+        {readerArticle}
+
+        {panelOpen && numPages > 0 && sidePanel}
       </div>
     </div>
   );

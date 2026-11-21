@@ -25,6 +25,7 @@ import { TodayView } from './components/TodayView.tsx';
 import { FirstRunGuide } from './components/FirstRunGuide.tsx';
 import { playPageSwitch } from './lib/sounds.ts';
 import { useIsMobile } from './lib/useIsMobile.ts';
+import { runBackLayer } from './lib/backLayers.ts';
 import { dueCount } from './utils/flashcardStore.ts';
 import { listCapturedQuestions } from './utils/mistakeStore.ts';
 import { subscribeDataChanged } from './utils/dataEvents.ts';
@@ -47,6 +48,58 @@ export default function App() {
   const isMobile = useIsMobile();
   const immersiveTest = isMobile && testImmersive && currentView === 'test-runner';
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Phone Back button: step back through the screens (and close an open menu or dialog first) instead of closing the app.
+  const viewRef = useRef<AppView>(currentView);
+  const navOpenRef = useRef(false);
+  const viewStackRef = useRef<AppView[]>([]);
+  const lastViewRef = useRef<AppView>(currentView);
+  const fromBackRef = useRef(false);
+  viewRef.current = currentView;
+  navOpenRef.current = mobileNavOpen;
+  useEffect(() => {
+    if (fromBackRef.current) { fromBackRef.current = false; lastViewRef.current = currentView; return; }
+    if (lastViewRef.current !== currentView) {
+      const stack = viewStackRef.current;
+      // Do not stack the same screen twice in a row.
+      if (stack[stack.length - 1] !== lastViewRef.current) {
+        viewStackRef.current = [...stack.slice(-30), lastViewRef.current];
+      }
+      lastViewRef.current = currentView;
+    }
+  }, [currentView]);
+  const lastExitPressRef = useRef(0);
+  const exitToastTimerRef = useRef<number | undefined>(undefined);
+  const [exitToast, setExitToast] = useState(false);
+  useEffect(() => {
+    // The Android shell calls this on Back. 'handled' = the app dealt with it, 'exit' = nothing left to go back to.
+    (window as unknown as { __pmBack?: () => string }).__pmBack = () => {
+      if (navOpenRef.current) { setMobileNavOpen(false); return 'handled'; }
+      if (runBackLayer()) return 'handled';
+      const closeBtn = document.querySelector<HTMLElement>('[role="dialog"] [aria-label="Close"], button[title="Close reasoning matrix"]');
+      if (closeBtn) { closeBtn.click(); return 'handled'; }
+      const prev = viewStackRef.current[viewStackRef.current.length - 1];
+      if (prev) {
+        viewStackRef.current = viewStackRef.current.slice(0, -1);
+        fromBackRef.current = true;
+        setCurrentView(prev);
+        return 'handled';
+      }
+      if (viewRef.current !== 'today') { setCurrentView('today'); return 'handled'; }
+      // Double Back to leave: the first press only shows a hint.
+      const now = Date.now();
+      if (now - lastExitPressRef.current < 2000) return 'exit';
+      lastExitPressRef.current = now;
+      setExitToast(true);
+      window.clearTimeout(exitToastTimerRef.current);
+      exitToastTimerRef.current = window.setTimeout(() => setExitToast(false), 2000);
+      return 'handled';
+    };
+    return () => {
+      delete (window as unknown as { __pmBack?: () => string }).__pmBack;
+      window.clearTimeout(exitToastTimerRef.current);
+    };
+  }, []);
   const drawerOpen = isMobile && mobileNavOpen && !focusMode;
   const drawerPanelRef = useRef<HTMLDivElement>(null);
   const drawerGestureRef = useRef<{
@@ -184,7 +237,9 @@ export default function App() {
 
   // Screens that hold long-running or unsaved work stay mounted (hidden) once opened, so
   // switching away never destroys an in-flight generation, filters, or a test in progress.
-  const KEEP_ALIVE: AppView[] = ['practice', 'pyq-topics', 'test-runner', 'question-bank'];
+  // The study plan, tutor, PDF reader and research screens also stop their running work when removed
+  // (their effects set a stop flag on unmount), so they stay mounted too.
+  const KEEP_ALIVE: AppView[] = ['practice', 'pyq-topics', 'test-runner', 'question-bank', 'bank-plan', 'study-plan', 'ai-tutor', 'pdf-reader', 'research'];
   // The PYQ Topics screen remembers which chapter it is showing; navigating back to it
   // (e.g. after a test) restores that chapter instead of dropping to the subject grid.
   const [pyqTarget, setPyqTarget] = useState<string | undefined>(undefined);
@@ -323,9 +378,8 @@ export default function App() {
     setCurrentExam(exam);
     setActiveTestMode(mode);
     setActiveTestQuestions(questions);
-    if (questions.length > 0) {
-      setActiveQuestionId(questions[0].id);
-    }
+    // No forced first question: the runner reopens a saved bank at the position it was left at.
+    setActiveQuestionId('');
     setCurrentView('test-runner');
   };
 
@@ -578,6 +632,16 @@ export default function App() {
               srsDueCount={srsDue}
             />
           </div>
+        </div>
+      )}
+
+      {isMobile && exitToast && (
+        <div
+          role="status"
+          className="pointer-events-none fixed inset-x-0 z-[90] flex justify-center px-4"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 84px)' }}
+        >
+          <span className="rounded-full bg-slate-900/90 px-4 py-2 text-sm font-medium text-white shadow-lg">Press back again to exit</span>
         </div>
       )}
 

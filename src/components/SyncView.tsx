@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import GenerationLogPanel from './GenerationLogPanel.tsx';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -375,6 +376,7 @@ export const SyncView: React.FC = () => {
           </div>
         </div>
       </section>
+      <GenerationLogPanel />
     </div>
   );
 };

@@ -96,13 +96,14 @@ export const TodayView: React.FC<Props> = ({ exam, onNavigate }) => {
                   </li>
                 ))}
               </ul>
-              <div className="mt-2 flex flex-wrap gap-2 max-md:mt-2 max-md:gap-1.5 md:mt-4 md:flex md:flex-wrap">
-                <button onClick={() => onNavigate('practice')} className="h-10 w-full rounded-lg bg-[#0f8b8d] px-4 text-sm font-semibold text-white hover:bg-[#0b6b6d] max-md:h-10 max-md:w-auto max-md:min-w-[140px] max-md:flex-1 max-md:whitespace-nowrap max-md:px-3 max-md:text-[13px]! md:h-auto md:min-h-[44px] md:w-auto md:rounded-xl md:px-5">
+              <div className="mt-2 flex flex-wrap gap-2 max-md:mt-2 max-md:flex-col max-md:gap-1.5 md:mt-4 md:flex md:flex-wrap">
+                <button onClick={() => onNavigate('practice')} className="h-10 w-full rounded-lg bg-[#0f8b8d] px-4 text-sm font-semibold text-white hover:bg-[#0b6b6d] max-md:h-auto max-md:min-h-10 max-md:py-1 max-md:w-full max-md:min-w-0 max-md:whitespace-normal max-md:leading-tight max-md:px-3 max-md:text-[13px]! md:h-auto md:min-h-[44px] md:w-auto md:rounded-xl md:px-5">
                   <span className="md:hidden">Continue practice</span>
                   <span className="hidden md:inline">Start practice</span>
                 </button>
-                <button onClick={teachWeak} className="h-10 w-full rounded-lg border border-[#0f8b8d] px-4 text-xs font-semibold text-[#0f8b8d] hover:bg-[#0f8b8d] hover:text-white max-md:h-10 max-md:w-auto max-md:min-w-[140px] max-md:flex-1 max-md:whitespace-nowrap max-md:px-2 max-md:text-[12px]! md:h-auto md:min-h-[44px] md:w-auto md:rounded-xl md:px-5 md:text-sm dark:border-teal-300 dark:text-teal-300">
-                  <Sparkles className="mr-1 inline h-4 w-4 max-md:h-3.5 max-md:w-3.5 md:mr-1.5" />{weak.length ? `Teach me ${weak[0].topic}` : 'Ask the tutor'}
+                <button onClick={teachWeak} className="h-10 w-full rounded-lg border border-[#0f8b8d] px-4 text-left text-xs font-semibold text-[#0f8b8d] hover:bg-[#0f8b8d] hover:text-white max-md:flex max-md:h-auto max-md:min-h-10 max-md:w-full max-md:min-w-0 max-md:items-start max-md:break-words max-md:whitespace-normal max-md:px-2.5 max-md:py-1.5 max-md:leading-tight max-md:text-[12px]! md:h-auto md:min-h-[44px] md:w-auto md:rounded-xl md:px-5 md:text-center md:text-sm dark:border-teal-300 dark:text-teal-300">
+                  <Sparkles className="mr-1 inline h-4 w-4 max-md:mt-px max-md:h-3.5 max-md:w-3.5 max-md:shrink-0 md:mr-1.5" />
+                  <span className="max-md:line-clamp-2 max-md:min-w-0 max-md:flex-1 max-md:break-words">{weak.length ? `Teach me ${weak[0].topic}` : 'Ask the tutor'}</span>
                 </button>
               </div>
             </div>

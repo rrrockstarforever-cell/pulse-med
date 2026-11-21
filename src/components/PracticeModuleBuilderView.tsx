@@ -26,7 +26,7 @@ import { SUBTOPICS } from '../data/subtopics.ts';
 import { PHARMACOLOGY_TOPICS, PHARMACOLOGY_CHAPTERS } from '../data/pharmacologyTopics.ts';
 import { topTopicsFor, specialtyOf, topicMetaAny } from '../data/chapterTopics.ts';
 import { startRun, finishRun } from '../lib/diagnostics.ts';
-import { generateExamQuestions, balanceAnswerLetters, AiError, NOT_CONNECTED_MESSAGE, getActiveProvider, getEffectiveModel, aiComplete, splitTopic, planTopicFacts, factKey, type AssignedFact, type GenerateQuestionsOptions } from '../lib/ai.ts';
+import { generateExamQuestions, balanceAnswerLetters, AiError, NOT_CONNECTED_MESSAGE, getActiveProvider, getEffectiveModel, aiComplete, splitTopic, planTopicFacts, factKey, newFactMemory, type AssignedFact, type GenerateQuestionsOptions } from '../lib/ai.ts';
 import { generateImageFirstQuestion, imageBankSubjectsForLabels, selectImageBankCandidates, selectVerifiedImageQuestions, type BankImage, type ImageQuestionResult } from '../lib/imageFirst.ts';
 import { imageQuestionConcurrencyLimit } from '../lib/mcqConcurrency.ts';
 import { summarizeAttempts, attemptsToday, listAttempts } from '../utils/attemptStore.ts';
@@ -223,6 +223,9 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
   const [specialtyAll, setSpecialtyAll] = useState(false);
   // Free-text request ("lung carcinoma", "lung chapter"). When set, it replaces the specialty pick.
   const [topicRequest, setTopicRequest] = useState('');
+  const genJobRef = useRef<any>(null);
+  const deliveredRef = useRef<Record<string, unknown>[]>([]);
+  const launchRef = useRef<((n?: number) => void) | null>(null);
   const customTopic = topicRequest.trim().slice(0, 120);
   const [selectedNeetSubjects, setSelectedNeetSubjects] = useState<string[]>([]);
   const [selectedIniSubjects, setSelectedIniSubjects] = useState<string[]>([]);
@@ -264,6 +267,35 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
   }, [genState.busy]);
   // Questions kept from an earlier run that a Continue call appends to.
   const appendBaseRef = useRef<ClinicalQuestion[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let banner: HTMLDivElement | null = null;
+    void import('../utils/generationJobStore').then(m => m.getUnfinishedGenJob()).then(job => {
+      if (cancelled || !job) return;
+      banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;background:#fff;border:1px solid #ccc;border-radius:8px;padding:10px 14px;box-shadow:0 4px 12px rgba(0,0,0,.15);font:14px system-ui;display:flex;gap:8px;align-items:center';
+      banner.textContent = `Resume unfinished generation (${job.questions.length} of ${job.requestedCount} done)`;
+      const resume = document.createElement('button');
+      resume.textContent = 'Resume';
+      resume.onclick = () => {
+        banner?.remove();
+        appendBaseRef.current = job.questions as ClinicalQuestion[];
+        genJobRef.current = job;
+        const remaining = Math.max(1, job.requestedCount - job.questions.length);
+        launchRef.current?.(remaining);
+      };
+      const discard = document.createElement('button');
+      discard.textContent = 'Discard';
+      discard.onclick = () => {
+        banner?.remove();
+        void import('../utils/generationJobStore').then(mm => mm.discardGenJob(job.id));
+      };
+      banner.append(resume, discard);
+      document.body.appendChild(banner);
+    });
+    return () => { cancelled = true; banner?.remove(); };
+  }, []);
 
   // Saved AI-instruction profiles. The draft is persisted too, so a reload never loses the
   // text; an applied profile stays wired to the next generation until it is cleared.
@@ -425,6 +457,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
   };
 
   const handleLaunch = async (countOverride?: number) => {
+    launchRef.current = handleLaunch;
     if (genState.busy) return;
     setHeldBackNote(null);
     const requestedCount = Math.max(1, Math.min(100, Math.round(countOverride ?? questionCount)));
@@ -493,10 +526,25 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
     // Busy is set before the split, so the button is disabled at once and a second click cannot start another run.
     setPartial(null);
     setGenState({ busy: true, generated: 0, total: requestedCount, batch: 0, totalBatches: Math.ceil(requestedCount / 10), dropped: 0, error: null });
+    const resumingJob = genJobRef.current && appendBaseRef.current ? genJobRef.current : null;
+    const job = resumingJob ?? {
+      id: `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      status: 'running' as const,
+      requestedCount,
+      params: { exam: selectedExam, topic: customTopic || null, sourceMode, imageMode, difficultyTier },
+      questions: (appendBaseRef.current ?? []) as unknown[],
+    };
+    if (resumingJob) { job.updatedAt = Date.now(); job.status = 'running'; }
+    genJobRef.current = job;
+    void import('../utils/generationJobStore').then(m => m.saveGenJob(job));
     // Diagnostics for this run: every rejected and kept draft with its evidence, the plan steps and a summary
     // (globalThis.__runReport; pulseRunReport() downloads it; a copy is saved under <data folder>/diagnostics/).
     startRun({
       exam: selectedExam, requested: requestedCount, topic: customTopic || null, specialities: customTopic ? [] : labelsFor(keys),
+      chosenTopics: customTopic ? [customTopic] : keys.flatMap((k) => selectedSubtopics[k] ?? []),
+      chosenBySpeciality: customTopic ? null : Object.fromEntries(keys.map((k) => [labelsFor([k])[0] ?? k, selectedSubtopics[k] ?? 'all topics'])),
       subtopicsChosen: customTopic ? null : topicsForKeys(keys).length, difficulty: difficultyTier, source: sourceMode, images: imageMode,
       provider: getActiveProvider(), model: getActiveProvider() ? getEffectiveModel(getActiveProvider()!) : null,
       questionTypes, stemPatterns, ignoreSaved: (() => { try { return localStorage.getItem('pulse.test.ignoreSaved') === '1'; } catch { return false; } })(),
@@ -548,7 +596,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
     // The plan is kept per topic for a day, so the same topic gives the same facts and set size on each run.
     // Book plans get their own key (suffix), so a book plan and a web plan for the same topic never mix.
     // Change PLAN_CODE_VERSION whenever the planning code changes, so plans saved by older code are not reused.
-    const PLAN_CODE_VERSION = 'c2';
+    const PLAN_CODE_VERSION = 'c3';
     const planKey = planTopicLabel ? `pulse.factPlan.v21.${PLAN_CODE_VERSION}.${selectedExam}.${requestedCount}.${planTopicLabel.toLowerCase()}.${planSubtopics.length}${sourceMode === 'MY_BOOKS' ? '.books' : ''}` : '';
     let factPlan: AssignedFact[] = [];
     // Every planning step records how many facts went in and came out, so a short plan can be explained
@@ -563,7 +611,8 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
     // outside top-up topic ("Second-line antitubercular drugs" → Pharmacology). Never the typed topic.
     const specialty = (f: AssignedFact) => specialtyOf(f.subtopic, f.fact);
     const capBySpecialty = (plan: AssignedFact[]): AssignedFact[] => {
-      const cap = Math.max(3, Math.ceil(requestedCount * 0.34));
+      // A typed topic ("bronchial asthma") sits mostly in one or two specialities by nature, so its cap is loose.
+      const cap = Math.max(3, Math.ceil(planWant * (customTopic ? 0.6 : 0.34)));
       const seen = new Map<string, number>();
       return plan.filter((f) => { const sp = specialty(f); if (!sp) return true; const n = (seen.get(sp) ?? 0) + 1; seen.set(sp, n); return n <= cap; });
     };
@@ -583,7 +632,10 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       } catch { /* saved questions unreadable: nothing is skipped */ }
     }
     const skipSaved = (plan: AssignedFact[]) => (oldFacts.length ? plan.filter((f) => !oldFacts.some((o) => stemSimilarity(o, factKey(f.fact)) >= 0.5)) : plan);
-    const budget = Math.ceil(requestedCount * 1.15);
+    // A typed topic is planned for about 1.4 x the questions asked: roughly a third of drafts fail their checks and repeated
+    // ideas are refused, so spare distinct facts are worth more than a second question on a fact that is already used.
+    const planWant = customTopic ? Math.ceil(requestedCount * 1.4) : requestedCount;
+    const budget = Math.ceil(planWant * 1.15);
     if (planTopicLabel && planProvider && planSubtopics.length) {
       try {
         const saved = JSON.parse(localStorage.getItem(planKey) || 'null') as { at: number; plan: AssignedFact[] } | null;
@@ -592,7 +644,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
         factPlan = [];
       }
       if (!factPlan.length) {
-        factPlan = await planTopicFacts(planTopicLabel, planSubtopics, planFactCounts, planProvider, sourceMode === 'MY_BOOKS', requestedCount);
+        factPlan = await planTopicFacts(planTopicLabel, planSubtopics, planFactCounts, planProvider, sourceMode === 'MY_BOOKS', planWant);
         const summary = (globalThis as { __planSummary?: { found?: number; afterDedupe?: number } }).__planSummary;
         if (summary?.found !== undefined) logStep('found in sources (after per-subtopic cap)', 0, summary.found);
         if (summary?.afterDedupe !== undefined) logStep('duplicates and off-topic removed', summary.found ?? 0, summary.afterDedupe);
@@ -667,6 +719,12 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       const batchPromises: Promise<void>[] = [];
       const onBatch = (batchQuestions: ClinicalQuestion[]): Promise<void> => {
         const run = async () => {
+          const job = genJobRef.current;
+          if (job) {
+            job.questions = [...job.questions, ...batchQuestions];
+            job.updatedAt = Date.now();
+            void import('../utils/generationJobStore').then(m => m.checkpointGenJob(job));
+          }
           if (postSignal.aborted) return;
 
           // Questions are kept as written (the writer already checked them), so there is no refine pass.
@@ -816,12 +874,19 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             : `Only ${questions.length} of ${targetCount} requested questions passed image generation and verification. ${failures} candidates failed${failureSummary() ? ` (${failureSummary()})` : ''}; no text-only questions were added.`);
           return;
         }
+        if (genJobRef.current) {
+          const jobId = genJobRef.current.id;
+          genJobRef.current = null;
+          void import('../utils/generationJobStore').then(m => m.completeGenJob(jobId));
+        }
         launchWith(questions, labels, chosenSubtopics, true);
         return;
       }
 
       // Same settings for the first pass and for any replacement round; only the count and batches differ.
       const moduleUnits = new Set<string>();
+      // Facts that failed in one round stay retired in the next rounds of this module.
+      const factMemory = newFactMemory();
       const genArgs = (count: number, batchPromises: Promise<void>[]): GenerateQuestionsOptions => ({
         exam: selectedExam,
         count,
@@ -853,6 +918,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
         sourceMaterial,
         // One set for the whole module, so a later round never writes the same drug or topic again.
         usedUnits: moduleUnits,
+        factMemory,
         existing: storedSeeds,
       });
       // Keep generating until the module has the number asked for. A question that fails its check is
@@ -862,6 +928,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       let dropped = first.dropped;
       let stopped = first.stopped;
       let failure = first.failure;
+      let emptyRounds = 0;
       for (let round = 2; round <= MAX_FILL_ROUNDS && questions.length < targetCount && !stopped && !failure && !stopEarlyRef.current; round++) {
         setHeldBackNote(`Round ${round}: ${questions.length}/${targetCount} kept, writing more…`);
         const more = await generateExamQuestions({
@@ -870,6 +937,9 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
           existing: [...storedSeeds, ...questions],
         });
         questions = [...questions, ...more.questions];
+        // Two rounds in a row that add nothing mean no usable facts are left (retired facts stay retired): stop here.
+        emptyRounds = more.questions.length === 0 ? emptyRounds + 1 : 0;
+        if (emptyRounds >= 2) break;
         dropped += more.dropped;
         stopped = more.stopped;
         failure = more.failure;
@@ -1027,6 +1097,11 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       // A typed topic is answered from every specialty that asks it, so its questions carry their own specialty names
       // (Pathology, Surgery, Radiodiagnosis...). The "belongs to a selected specialty" filter is only for picked specialties.
       // After Continue, targetCount is only the part still to be made, so the questions kept earlier are added back.
+      if (genJobRef.current) {
+        const jobId = genJobRef.current.id;
+        genJobRef.current = null;
+        void import('../utils/generationJobStore').then(m => m.completeGenJob(jobId));
+      }
       launchWith(merged.slice(0, (base ? base.length : 0) + targetCount), labels, chosenSubtopics, Boolean(customTopic) || factPlan.length > 0);
     } catch (err: any) {
       const aborted = controller.signal.aborted || (err instanceof AiError && err.kind === 'aborted');
@@ -1037,13 +1112,20 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
       // A 401 usually means the engine was signed out: refresh the banner immediately.
       if (!aborted && err instanceof AiError && err.kind === 'not_connected') refreshProviderStatus();
     } finally {
-      finishRun({ stoppedByUser: stopEarlyRef.current });
+      if (stopEarlyRef.current && genJobRef.current) {
+        const jobId = genJobRef.current.id;
+        genJobRef.current = null;
+        void import('../utils/generationJobStore').then(m => m.discardGenJob(jobId));
+      }
+      finishRun({ stoppedByUser: stopEarlyRef.current, delivered: deliveredRef.current });
+      deliveredRef.current = [];
       abortRef.current = null;
       setStopping(false);
     }
   };
 
   const launchWith = (questions: ClinicalQuestion[], subjects: string[], chosenSubtopics: string[], skipSubjectFilter = false) => {
+    deliveredRef.current = questions.map((q) => ({ subject: q.subject, subtopic: q.subtopic, stem: String(q.stem ?? '').slice(0, 200), answer: q.correctOption, keyFact: (q as { keyFact?: string }).keyFact }));
     // Only questions that belong to a selected subject go to the runner.
     const selectedSubjects = new Set(subjects.map(normalizeSubject));
     const passed = skipSubjectFilter ? questions : questions.filter((q) => selectedSubjects.size === 0 || selectedSubjects.has(normalizeSubject(q.subject || '')));
@@ -1524,7 +1606,7 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
                       <span className="min-w-0">
                         <span className="block text-xs font-semibold text-slate-800 truncate">
                           {row.label}
-                          {row.highYield && <span className="ml-1 text-[9px] text-amber-500 align-top">★</span>}
+                          {row.highYield && <span className="ml-1 text-[9px] text-amber-600 dark:text-amber-400 align-top">★</span>}
                         </span>
                         <span className="block text-[10px] text-slate-500 mt-0.5">
                           {on
@@ -1752,7 +1834,6 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             <textarea
               value={profileDraft}
               onChange={(e) => setProfileDraft(e.target.value)}
-              disabled={genState.busy}
               rows={3}
               placeholder={'e.g. "closer distractors, shorter stems, more next-best-step items, use Indian guidelines, drop classic one-liners"'}
               className="w-full resize-y rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-2 text-[11px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#0f8b8d] disabled:opacity-50"
@@ -1761,14 +1842,14 @@ export const PracticeModuleBuilderView: React.FC<PracticeModuleBuilderViewProps>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setAppliedProfile(profileDraft.trim() || null)}
-                disabled={genState.busy || !profileDraft.trim() || (appliedProfile ?? '') === profileDraft.trim()}
+                disabled={!profileDraft.trim() || (appliedProfile ?? '') === profileDraft.trim()}
                 className="flex-1 min-w-[110px] py-1.5 rounded-lg bg-[#0f8b8d] hover:bg-[#00696b] disabled:opacity-40 disabled:cursor-not-allowed text-white text-[10px] font-medium transition-colors"
               >
                 {appliedProfile && appliedProfile === profileDraft.trim() ? 'Profile applied' : 'Apply to next run'}
               </button>
               <button
                 onClick={() => { setProfileDraft(''); persistDraft(''); }}
-                disabled={genState.busy || !profileDraft.trim()}
+                disabled={!profileDraft.trim()}
                 className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 text-[10px] font-semibold transition-colors"
               >
                 Clear draft

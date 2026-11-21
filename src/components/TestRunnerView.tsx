@@ -32,6 +32,7 @@ import { buildReview, saveReview, type ReviewRecord } from '../lib/testReview.ts
 import { rewardForTest } from '../utils/gameStore.ts';
 import { loadRunSession, saveRunSession, signature } from '../utils/sessionStore.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useBackLayer } from '../lib/backLayers.ts';
 
 interface TestRunnerViewProps {
   initialQuestionId?: string;
@@ -276,6 +277,71 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
     propQuestions && propQuestions.length > 0 ? loadRunSession(signature(propQuestions)) : null,
   );
   const skipFirstSync = useRef<boolean>(Boolean(restoredRun));
+  // Swipe down on the explanation sheet's handle or header to close it (phones).
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const [sheetClosing, setSheetClosing] = useState(false);
+  const [sheetBodyReady, setSheetBodyReady] = useState(false);
+  // Slide the sheet down before it goes away (phones); other screens close at once.
+  const closeSheet = (fromPx = 0) => {
+    if (sheetClosing) return;
+    const el = sheetRef.current;
+    if (!el || !isPhone) { setMatrixOpen(false); return; }
+    el.style.setProperty('--pm-from', `${Math.max(0, Math.round(fromPx))}px`);
+    // Start the slide-out on the very next frame, without waiting for React to re-render.
+    el.style.transition = 'none';
+    el.classList.remove('pm-sheet-in');
+    el.classList.add('pm-sheet-out');
+    setSheetClosing(true);
+    window.setTimeout(() => { setMatrixOpen(false); setSheetClosing(false); }, 230);
+  };
+  const sheetDragStart = useRef<number | null>(null);
+  // Same swipe from inside the scrolling body, but only once the body is scrolled back to the top.
+  const contentTouch = {
+    onTouchStart: (e: React.TouchEvent<HTMLDivElement>) => {
+      sheetDragStart.current = e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null;
+    },
+    onTouchMove: (e: React.TouchEvent<HTMLDivElement>) => {
+      const el = sheetRef.current;
+      if (!el) return;
+      const y = e.touches[0].clientY;
+      if (sheetDragStart.current == null) {
+        if (e.currentTarget.scrollTop <= 0) sheetDragStart.current = y;
+        else return;
+      }
+      const dy = y - sheetDragStart.current;
+      if (dy <= 0) { el.style.transition = 'none'; el.style.transform = ''; return; }
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dy}px)`;
+    },
+    onTouchEnd: (e: React.TouchEvent<HTMLDivElement>) => {
+      if (sheetDragStart.current == null) return;
+      const dy = e.changedTouches[0].clientY - sheetDragStart.current;
+      sheetDragStart.current = null;
+      const el = sheetRef.current;
+      if (el) { el.style.transition = 'transform 180ms ease-out'; el.style.transform = ''; }
+      if (dy > 80) closeSheet(dy);
+    },
+  };
+  const sheetTouch = {
+    onTouchStart: (e: React.TouchEvent) => { sheetDragStart.current = e.touches[0].clientY; },
+    onTouchMove: (e: React.TouchEvent) => {
+      if (sheetDragStart.current == null || !sheetRef.current) return;
+      const dy = Math.max(0, e.touches[0].clientY - sheetDragStart.current);
+      sheetRef.current.style.transition = 'none';
+      sheetRef.current.style.transform = `translateY(${dy}px)`;
+    },
+    onTouchEnd: (e: React.TouchEvent) => {
+      if (sheetDragStart.current == null) return;
+      const dy = e.changedTouches[0].clientY - sheetDragStart.current;
+      sheetDragStart.current = null;
+      const el = sheetRef.current;
+      if (el) { el.style.transition = 'transform 180ms ease-out'; el.style.transform = ''; }
+      if (dy > 80) closeSheet(dy);
+    },
+  };
+  useEffect(() => {
+    if ((restoredRun as any)?.qTimes) qTimeRef.current = (restoredRun as any).qTimes;
+  }, [restoredRun]);
 
   const [questions, setQuestions] = useState<ClinicalQuestion[]>(propQuestions ?? []);
   const [currentIndex, setCurrentIndex] = useState<number>(restoredRun?.index ?? 0);
@@ -296,7 +362,32 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
   // "Dissect with AI Tutor" can open the reasoning matrix before the question is
   // answered, so the panel has its own visibility flag.
   const [matrixOpen, setMatrixOpen] = useState<boolean>(false);
+  // On phones the sheet body fills in once the slide-up has finished, so the slide is not stalled by the heavy first render.
+  useEffect(() => {
+    if (!matrixOpen) { setSheetBodyReady(false); return; }
+    if (!isPhone) { setSheetBodyReady(true); return; }
+    setSheetBodyReady(false);
+    const t = window.setTimeout(() => setSheetBodyReady(true), 320);
+    return () => window.clearTimeout(t);
+  }, [matrixOpen, isPhone]);
   const [paletteOpen, setPaletteOpen] = useState<boolean>(false);
+
+  // Phone Back. A running test asks "Leave the test?" first (progress is already saved by the run-session store);
+  // the explanation sheet and the question palette close before that.
+  const [leaveAsk, setLeaveAsk] = useState(false);
+  const [leaveGo, setLeaveGo] = useState(false);
+  const testRunning = active && isPhone && questions.length > 0 && !examSubmitted && !leaveGo;
+  useBackLayer(testRunning, () => setLeaveAsk((v) => !v));
+  useBackLayer(active && isPhone && paletteOpen, () => setPaletteOpen(false));
+  useBackLayer(active && isPhone && matrixOpen, () => closeSheet());
+  useBackLayer(active && isPhone && leaveAsk, () => setLeaveAsk(false));
+  useEffect(() => { if (!testRunning) setLeaveAsk(false); }, [testRunning]);
+  useEffect(() => {
+    if (!leaveGo) return;
+    // Leave: the test layer is gone for this render, so Back now takes the normal route out of the screen.
+    (window as unknown as { __pmBack?: () => string }).__pmBack?.();
+    setLeaveGo(false);
+  }, [leaveGo]);
 
   const takingQuestion = active && questions.length > 0 && !showResultsScreen;
   useEffect(() => {
@@ -361,6 +452,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
       submitted: examSubmitted,
       showResults: showResultsScreen,
       showExplanation,
+      qTimes: qTimeRef.current,
     });
     // Let the Question Bank's saved list show the new progress.
     window.dispatchEvent(new Event('pulse-modules-changed'));
@@ -617,8 +709,9 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
     const dy = endY - start.y;
     const elapsed = Math.max(endTime - start.time, 1);
     const distance = Math.abs(dy);
-    const requiredDistance = Math.max(140, Math.round(window.innerHeight * 0.2));
-    const isFlick = distance >= 100 && distance / elapsed > 0.7;
+    // Phones switch questions on a short drag (about 64 px, or a quick 45 px flick); desktop keeps the longer drag.
+    const requiredDistance = isPhone ? Math.max(64, Math.round(window.innerHeight * 0.09)) : Math.max(140, Math.round(window.innerHeight * 0.2));
+    const isFlick = isPhone ? distance >= 45 && distance / elapsed > 0.5 : distance >= 100 && distance / elapsed > 0.7;
     if ((distance < requiredDistance && !isFlick) || distance <= Math.abs(dx) * 1.3) return;
     const region = start.scrollRegion;
     if (region && Math.abs(region.scrollTop - start.startScrollTop) > 2) return;
@@ -751,7 +844,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
   return (
     <div className={`-m-4 min-h-[calc(100vh-56px)] selection:bg-teal-500/30 sm:-m-6 lg:-m-8 ${takingQuestion ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:m-0 max-md:flex max-md:h-[100dvh] max-md:min-h-0 max-md:flex-col max-md:overflow-hidden' : 'max-md:-m-3 max-md:min-h-0'} ${t.page}`}>
       {/* ── Top cockpit bar ─────────────────────────────────────────────── */}
-      <header className={`z-20 overflow-hidden border-b-2 px-2 py-0 max-md:shrink-0 max-md:border-b md:sticky md:top-0 md:px-6 md:py-2 ${t.bar}`}>
+      <header className={`z-20 overflow-hidden border-b-2 px-2 py-0 max-md:overflow-visible max-md:shrink-0 max-md:border-b md:sticky md:top-0 md:px-6 md:py-2 ${t.bar}`}>
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 opacity-[0.05]"
@@ -763,7 +856,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
         />
 
         {/* Dense native-app header: phones only */}
-        <div className="relative z-10 flex h-9 items-center gap-1.5 md:hidden">
+        <div className="relative z-10 flex h-11 items-center gap-1.5 md:hidden">
           <button
             onClick={() => onNavigate(currentQ?.sourceType ? 'question-bank' : 'practice')}
             className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition before:absolute before:-inset-1.5 before:content-[''] ${t.barBack}`}
@@ -1003,9 +1096,9 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                 onMouseUp={handleMouseUp}
               >
                 <section className={`space-y-3 rounded-xl border p-3 md:space-y-5 md:p-6 ${takingQuestion ? 'max-md:flex max-md:h-full max-md:min-h-0 max-md:flex-col max-md:gap-2 max-md:space-y-0 max-md:overflow-hidden max-md:border-0 max-md:bg-transparent max-md:p-0 max-md:shadow-none' : ''} ${t.card} ${t.shadowXl}`}>
-              <div data-question-scroll className={`space-y-3 md:contents md:space-y-5 ${takingQuestion ? 'max-md:min-h-[88px] max-md:max-h-[60%] max-md:flex-[0_1_auto] max-md:overflow-y-auto max-md:overscroll-y-contain max-md:rounded-xl max-md:border max-md:p-2.5 max-md:space-y-2 ' + t.card : ''}`}>
+              <div data-question-scroll className={`space-y-3 md:contents md:space-y-5 ${takingQuestion ? 'max-md:min-h-[88px] max-md:max-h-[60%] max-md:flex-[0_1_auto] max-md:overflow-y-auto max-md:overscroll-y-contain max-md:rounded-xl max-md:border max-md:p-3 max-md:space-y-3 ' + t.card : ''}`}>
               {hasVignette && (
-                <div className={`rounded-r-xl border p-3 max-md:rounded-none max-md:border-0 max-md:border-l-2 max-md:bg-transparent max-md:p-0 max-md:pl-2.5 md:p-5 ${t.inner}`}>
+                <div className={`rounded-r-xl border p-3 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0 md:p-5 ${t.inner}`}>
                   <div className="mb-2 flex items-center justify-between max-md:mb-1">
                     <span className={`rounded border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider max-md:border-0 max-md:bg-transparent max-md:px-0 max-md:font-sans max-md:text-[11px]! max-md:text-slate-500 max-md:dark:text-slate-400 ${t.vignetteLabel}`}>
                       Clinical Vignette
@@ -1014,7 +1107,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                       {currentQ?.moduleCode ?? `Q-${currentQ?.id?.slice(-6) ?? currentIndex + 1}`}
                     </span>
                   </div>
-                  <p className={`whitespace-pre-line break-words text-[16px] leading-6 max-md:text-[15px]! max-md:leading-[1.55] max-md:text-slate-800 max-md:dark:text-slate-200 md:text-[20px] md:leading-relaxed ${t.strong}`}>{rawStem}</p>
+                  <p className={`whitespace-pre-line break-words text-[16px] leading-6 max-md:text-[15px]! max-md:font-normal! max-md:leading-[1.55] max-md:tracking-[0.01em] max-md:text-slate-800 max-md:dark:text-slate-200 md:text-[20px] md:leading-relaxed ${t.strong}`}>{rawStem}</p>
                 </div>
               )}
 
@@ -1068,8 +1161,8 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
 
               {/* Question — large enough to read comfortably, in step with the vignette above */}
               <div>
-                <h2 className={`flex items-start gap-2 break-words text-[16px] font-semibold leading-6 max-md:gap-2 max-md:text-[17px]! max-md:leading-[1.4] md:gap-3 md:text-[20px] md:leading-relaxed ${t.title}`}>
-                  <span className={`mt-0.5 shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium max-md:mt-0 max-md:rounded-full max-md:px-2 max-md:font-sans max-md:text-[10px]! ${t.vignetteLabel}`}>
+                <h2 className={`flex items-start gap-2 break-words text-[16px] font-semibold leading-6 max-md:flex-col max-md:gap-1 max-md:text-[17px]! max-md:leading-[1.45] md:gap-3 md:text-[20px] md:leading-relaxed ${t.title}`}>
+                  <span className={`mt-0.5 shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium max-md:mt-0 max-md:w-fit max-md:rounded max-md:border-0! max-md:bg-transparent! max-md:px-0 max-md:font-sans max-md:text-[11px]! max-md:font-medium max-md:text-slate-500 max-md:dark:text-slate-400 ${t.vignetteLabel}`}>
                     Q{currentIndex + 1}
                   </span>
                   <span className="min-w-0">{questionPrompt}</span>
@@ -1090,7 +1183,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
               </div>
 
               {/* Options */}
-              <div data-question-scroll className={`space-y-2 md:space-y-2.5 max-md:space-y-1.5 ${takingQuestion ? 'max-md:min-h-0 max-md:flex-[0_1_auto] max-md:overflow-y-auto max-md:overscroll-y-contain max-md:rounded-xl max-md:border max-md:p-2 max-md:pb-4 max-md:shadow-sm ' + t.card : ''}`}>
+              <div data-question-scroll className={`space-y-2 md:space-y-2.5 max-md:space-y-0 ${takingQuestion ? 'max-md:min-h-0 max-md:flex-[0_1_auto] max-md:overflow-y-auto max-md:overscroll-y-contain max-md:rounded-xl max-md:border max-md:divide-y max-md:divide-slate-200/70 max-md:p-0 max-md:shadow-sm max-md:dark:divide-slate-700/60 ' + t.card : ''}`}>
                 {currentQ.options.map((opt) => {
                   const picked = selectedAnswer === opt.id;
                   const correct = currentQ.correctOption === opt.id;
@@ -1114,7 +1207,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                       onClick={() => handleSelectOption(opt.id)}
                       disabled={isLocked}
                       aria-pressed={picked}
-                      className={`group relative flex min-h-[52px] w-full flex-col gap-1.5 rounded-xl px-3 py-2 text-left transition-all duration-150 max-md:min-h-[40px] max-md:gap-0.5 max-md:border max-md:px-2.5 max-md:py-2 max-md:shadow-[0_1px_2px_rgba(15,23,42,0.05)] max-md:hover:translate-y-0 active:translate-y-0 md:gap-2 md:px-4 md:py-3.5 ${shell} ${
+                      className={`group relative flex min-h-[52px] w-full flex-col gap-1.5 rounded-xl px-3 py-2 text-left transition-all duration-150 max-md:min-h-[44px] max-md:gap-0.5 max-md:border-0! max-md:rounded-none max-md:px-3 max-md:py-3 max-md:shadow-none max-md:hover:translate-y-0 active:translate-y-0 md:gap-2 md:px-4 md:py-3.5 ${shell} ${
                         isLocked
                           ? 'cursor-default'
                           : `cursor-pointer hover:-translate-y-1 `
@@ -1141,8 +1234,8 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                           LOCKED IN
                         </span>
                       )}
-                      <div className="flex items-center justify-between gap-2 md:gap-3">
-                        <div className="flex min-w-0 items-center gap-2.5 max-md:gap-2 md:gap-4">
+                      <div className="flex items-center justify-between gap-2 md:gap-3 max-md:items-start max-md:gap-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5 max-md:items-start max-md:gap-2.5 md:gap-4">
                           <div
                             className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border font-mono text-xs font-medium max-md:h-[22px] max-md:w-[22px] max-md:rounded-full max-md:font-sans max-md:text-[11px]! max-md:font-semibold md:h-10 md:w-10 md:rounded-lg md:text-sm ${tile}`}
                           >
@@ -1167,7 +1260,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                   );
                 })}
                 {reveal && mode === 'TUTOR' && !matrixOpen && (
-                  <button onClick={() => setMatrixOpen(true)} className={`flex h-9 w-fit items-center gap-2 rounded-full border px-3 text-xs font-semibold ${t.navBtn}`}>
+                  <button onClick={() => setMatrixOpen(true)} className={`flex h-9 w-fit items-center gap-2 rounded-full border px-3 text-xs font-semibold max-md:h-11 max-md:w-full max-md:justify-center max-md:rounded-none max-md:border-0! max-md:bg-transparent! max-md:px-3 max-md:text-[13px]! ${t.navBtn}`}>
                     <BookOpen className={`h-3.5 w-3.5 ${t.accentCyan}`} /> See explanation
                   </button>
                 )}
@@ -1183,21 +1276,24 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="fixed inset-0 z-30 bg-black/30 backdrop-blur-[2px] md:hidden"
-                    onClick={() => setMatrixOpen(false)}
+                    className={`fixed inset-0 z-30 bg-black/30 backdrop-blur-[2px] transition-opacity duration-200 md:hidden ${sheetClosing ? "opacity-0" : ""}`}
+                    onClick={() => closeSheet()}
                     aria-hidden
                   />
                 )}
                 <section
                   id="reasoning-matrix"
-                  className={`${
+                  ref={sheetRef}
+                  className={`${matrixOpen ? (sheetClosing ? "pm-sheet-out" : "pm-sheet-in") : ""} ${
                     matrixOpen
                       ? `fixed inset-x-0 bottom-0 z-40 max-h-[85vh] overflow-y-auto rounded-t-2xl border pb-[env(safe-area-inset-bottom)] sm:inset-y-0 sm:left-auto sm:right-0 sm:w-[560px] sm:max-w-[92vw] sm:rounded-none sm:border-l-4 sm:pb-0 max-md:top-[6dvh]! max-md:flex max-md:max-h-none max-md:flex-col max-md:overflow-hidden ${takingQuestion ? 'max-md:bottom-[calc(46px+env(safe-area-inset-bottom))]' : ''}`
                       : `overflow-hidden rounded-xl border ${takingQuestion ? 'max-md:hidden' : ''}`
                     } ${t.card} ${t.shadowXl} ${isPhone && !matrixOpen ? 'max-md:hidden' : ''}`}
                 >
-                <div className="md:hidden max-md:mx-auto max-md:mt-1.5 max-md:mb-1 max-md:h-1 max-md:w-9 max-md:rounded-full max-md:bg-slate-300 max-md:dark:bg-slate-600" aria-hidden />
-                <div className={`flex flex-wrap items-center justify-between gap-2 border-b px-3 pt-2.5 md:px-4 max-md:flex-col max-md:flex-nowrap max-md:items-stretch max-md:gap-0 max-md:px-3 max-md:pt-2 max-md:pb-0 max-md:shrink-0 ${t.matrixHead}`}>
+                <div className="md:hidden touch-none py-2" {...sheetTouch} aria-hidden>
+                  <div className="mx-auto h-1 w-9 rounded-full bg-slate-300 dark:bg-slate-600" />
+                </div>
+                <div {...sheetTouch} style={{ touchAction: 'pan-x' }} className={`flex flex-wrap items-center justify-between gap-2 border-b px-3 pt-2.5 md:px-4 max-md:flex-col max-md:flex-nowrap max-md:items-stretch max-md:gap-0 max-md:px-3 max-md:pt-2 max-md:pb-0 max-md:shrink-0 ${t.matrixHead}`}>
                   <div className="flex items-center gap-2 pb-2 max-md:w-full max-md:justify-between max-md:gap-0 max-md:pb-0">
                     <Activity className={`h-4 w-4 max-md:hidden ${t.accentCyan}`} />
                     <span className={`font-mono text-xs font-medium uppercase tracking-wider max-md:hidden ${t.strong}`}>
@@ -1208,7 +1304,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                     </span>
                     {matrixOpen && (
                       <button
-                        onClick={() => setMatrixOpen(false)}
+                        onClick={() => closeSheet()}
                         className={`ml-1 flex h-11 w-11 items-center justify-center rounded-md sm:h-8 sm:w-8 max-md:ml-0 max-md:h-9! max-md:w-9! max-md:shrink-0 max-md:rounded-full ${t.ghostBtn}`}
                         title="Close reasoning matrix"
                       >
@@ -1226,7 +1322,13 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                   )}
                 </div>
 
-                <div className="space-y-2.5 p-3 md:space-y-4 md:p-5 max-md:flex-1 max-md:min-h-0 max-md:overflow-y-auto max-md:overscroll-y-contain max-md:px-3 max-md:pb-3 max-md:pt-0">
+                <div {...contentTouch} className="space-y-2.5 p-3 md:space-y-4 md:p-5 max-md:flex-1 max-md:min-h-0 max-md:overflow-y-auto max-md:overscroll-y-contain max-md:px-3 max-md:pb-3 max-md:pt-0">
+                  {!sheetBodyReady ? (
+                    <div className="space-y-3 pt-3" aria-hidden>
+                      <div className="h-20 animate-pulse rounded-xl bg-slate-200/70 dark:bg-slate-700/50" />
+                      <div className="h-28 animate-pulse rounded-xl bg-slate-200/70 dark:bg-slate-700/50" />
+                    </div>
+                  ) : (<>
                   {!reveal && (
                     <AiQuestionTools dark={darkMode} question={currentQ} userChoice={selectedAnswer} />
                   )}
@@ -1311,6 +1413,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                   {reveal && matrixTab === 'ai' && (
                     <AiQuestionTools dark={darkMode} question={currentQ} userChoice={selectedAnswer} />
                   )}
+                  </>)}
                 </div>
               </section>
               </>
@@ -1366,7 +1469,7 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
                   <ChevronRight className="h-4 w-4" />
                 </button>
 
-                {!examSubmitted && (
+                {!examSubmitted && currentIndex === questions.length - 1 && !!selectedAnswer && (
                   <button
                     onClick={mode === 'EXAM' ? handleSubmitExam : handleSubmitModule}
                     className="relative flex h-9 min-h-0 items-center justify-center gap-1 rounded-lg border border-[#0f8b8d] bg-[#0f8b8d] px-2.5 text-xs font-semibold text-white transition hover:bg-[#0b6b6d] active:translate-y-0.5 md:hidden max-md:text-[12px]! max-md:before:absolute max-md:before:-inset-1 max-md:before:content-[''] dark:border-teal-500 dark:bg-teal-600 dark:text-white dark:hover:bg-teal-500"
@@ -1456,6 +1559,32 @@ export const TestRunnerView: React.FC<TestRunnerViewProps> = ({
           </div>
         </aside>
       </div>
+
+      {/* Phone Back in a running test: confirm before leaving */}
+      {leaveAsk && testRunning && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-6 md:hidden" role="alertdialog" aria-modal="true" aria-label="Leave the test?">
+          <div className={`w-full max-w-sm rounded-2xl p-5 ${t.card} ${t.shadowXl}`}>
+            <h3 className={`text-base font-semibold ${t.strong}`}>Leave the test?</h3>
+            <p className="mt-1 text-sm opacity-80">Your progress is saved.</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setLeaveAsk(false)}
+                className="flex-1 rounded-xl bg-[#0f8b8d] px-4 py-3 text-sm font-semibold text-white"
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                onClick={() => { setLeaveAsk(false); setLeaveGo(true); }}
+                className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold ${t.ghostBtn}`}
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Phone question palette bottom sheet */}
       {paletteOpen && (

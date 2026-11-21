@@ -19,6 +19,7 @@ export interface DropRecord {
   subtopic?: string;
   subject?: string;
   fact?: string;
+  angle?: string;
   planned?: boolean | null;
   attempt?: number;
   slot?: { style?: string; leadIn?: string; tier?: string };
@@ -44,6 +45,21 @@ interface RunState {
 let run: RunState | null = null;
 let seq = 0;
 
+// Tokens used by the AI calls of this run. The ChatGPT connection does not report real token counts,
+// so they are estimated from the text sent and received (about 4 characters per token).
+interface TokenNote { purpose: string; model: string; input: number; output: number; ok: boolean }
+let tokenNotes: TokenNote[] = [];
+const CHARS_PER_TOKEN = 4;
+export function noteTokens(purpose: string | undefined, model: string, inputChars: number, outputChars: number, ok: boolean): void {
+  tokenNotes.push({
+    purpose: purpose || 'other',
+    model,
+    input: Math.ceil(inputChars / CHARS_PER_TOKEN),
+    output: Math.ceil(outputChars / CHARS_PER_TOKEN),
+    ok,
+  });
+}
+
 const g = globalThis as {
   __runReport?: unknown;
   __drops?: unknown[];
@@ -53,6 +69,8 @@ const g = globalThis as {
   __planDebug?: unknown;
   __invalid?: unknown[];
   __stageLog?: { stage: string; ms: number }[];
+  __varietyDebug?: unknown[];
+  __providerErrors?: string[];
 };
 
 /** Starts a run (the first generation round); later rounds of the same module continue it. */
@@ -60,6 +78,10 @@ export function startRun(meta: Record<string, unknown>, continueRun = false): vo
   if (continueRun && run) { run.meta = { ...run.meta, rounds: Number(run.meta.rounds ?? 1) + 1 }; return; }
   run = { startedAt: new Date().toISOString(), t0: Date.now(), meta: { ...meta, rounds: 1 }, records: [], invalid: [] };
   seq = 0;
+  tokenNotes = [];
+  g.__varietyDebug = [];
+  g.__providerErrors = [];
+  (globalThis as { __repairs?: unknown[] }).__repairs = [];
   g.__drops = [];
   g.__invalid = [];
 }
@@ -110,6 +132,32 @@ export function finishRun(extra: Record<string, unknown> = {}): unknown {
     stages[s.stage].calls += 1;
     stages[s.stage].ms += s.ms;
   }
+  const tokens = (() => {
+    const sum = (list: TokenNote[]) => ({ calls: list.length, input: list.reduce((a, n) => a + n.input, 0), output: list.reduce((a, n) => a + n.output, 0) });
+    const all = sum(tokenNotes);
+    const byPurpose: Record<string, { calls: number; input: number; output: number }> = {};
+    const byModel: Record<string, { calls: number; input: number; output: number }> = {};
+    for (const n of tokenNotes) {
+      for (const [map, key] of [[byPurpose, n.purpose], [byModel, n.model]] as const) {
+        const row = (map[key] ??= { calls: 0, input: 0, output: 0 });
+        row.calls += 1; row.input += n.input; row.output += n.output;
+      }
+    }
+    const wasted = sum(tokenNotes.filter((n) => !n.ok));
+    return {
+      estimated: true,
+      method: 'about 4 characters per token; the provider does not report real counts',
+      calls: all.calls,
+      input: all.input,
+      output: all.output,
+      total: all.input + all.output,
+      failedCalls: wasted.calls,
+      wastedTotal: wasted.input + wasted.output,
+      perKeptQuestion: kept.length ? Math.round((all.input + all.output) / kept.length) : 0,
+      byPurpose,
+      byModel,
+    };
+  })();
   const report = {
     version: 1,
     startedAt: run.startedAt,
@@ -132,11 +180,17 @@ export function finishRun(extra: Record<string, unknown> = {}): unknown {
     keptBySubtopic: count(kept, (r) => r.subtopic),
     plan: { steps: g.__planSteps ?? null, summary: g.__planSummary ?? null, debug: g.__planDebug ?? null },
     stages,
+    tokens,
+    variety: g.__varietyDebug ?? null,
+    providerErrors: (g.__providerErrors ?? []).slice(-60),
+    repairs: (() => { const list = ((globalThis as { __repairs?: { outcome: string; reason?: string }[] }).__repairs ?? []); const by: Record<string, number> = {}; for (const r of list) { const k = `${r.reason ?? "?"}: ${r.outcome}`; by[k] = (by[k] ?? 0) + 1; } return by; })(),
     invalid: g.__invalid ?? [],
     records,
     ...extra,
   };
   g.__runReport = report;
+  // A copy stays on this device (phone or PC) so the run can be sent for analysis later: Sync & Backup > Generation log.
+  void import('../utils/generationLogStore.ts').then((m) => m.saveRunLog(report)).catch(() => {});
   try {
     console.info(`[run] kept ${report.totals.kept}, rejected ${report.totals.rejected} (${report.totals.shareKept}% kept) in ${report.seconds}s. Full report: globalThis.__runReport, download: pulseRunReport()`);
     console.table(Object.entries(report.rejectionsByReason).map(([reason, n]) => ({ reason, n })));

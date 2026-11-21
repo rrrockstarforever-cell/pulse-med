@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useBackLayer } from '../lib/backLayers.ts';
 import { 
   Cpu, 
   Sparkles, 
@@ -850,6 +851,7 @@ export const SettingsAIView: React.FC = () => {
     setEndpointTestResult(null);
     setSelectedProvider(null);
   };
+  useBackLayer(!!selectedProvider, handleCloseModal);
 
   return (
     <div className="space-y-2.5 md:space-y-6 max-w-7xl mx-auto rounded-[28px] max-md:rounded-2xl p-2.5 md:p-3 dark:dark:dark:sm:p-5 max-md:[&_button]:min-h-10">

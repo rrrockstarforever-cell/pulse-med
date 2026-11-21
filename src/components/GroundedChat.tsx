@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, ExternalLink, Mic, Send, Square, Trash2, X } from 'lucide-react';
 import { useVoiceInput } from './useVoiceInput.ts';
+import { VoiceWave } from './VoiceWave.tsx';
 import { RichAnswer } from './RichAnswer.tsx';
 import {
   askGrounded,
@@ -207,11 +208,12 @@ export const GroundedChat: React.FC<{
   subject?: string;
   seed?: { id: number; text: string; context?: string } | null;
   onClose?: () => void;
-}> = ({ bankId, title, subject, seed, onClose }) => {
+  onBusyChange?: (busy: boolean) => void;
+}> = ({ bankId, title, subject, seed, onClose, onBusyChange }) => {
   const [turns, setTurns] = useState<ChatTurn[]>(() => loadChat(bankId));
   const [input, setInput] = useState('');
   // Voice input: records here and turns speech into text on this device (same as the AI tutor).
-  const { recording, status: voiceStatus, toggle: toggleVoice } = useVoiceInput((text) => {
+  const { recording, status: voiceStatus, partial: voicePartial, levels: voiceLevels, toggle: toggleVoice } = useVoiceInput((text) => {
     setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
   });
   const [mode, setMode] = useState<GroundMode>('both');
@@ -237,7 +239,12 @@ export const GroundedChat: React.FC<{
   }, [bankId, turns]);
 
   useEffect(() => {
+    onBusyChange?.(waiting);
+  }, [waiting, onBusyChange]);
+
+  useEffect(() => {
     return () => {
+      onBusyChange?.(false);
       abortRef.current?.abort();
     };
   }, []);
@@ -455,6 +462,7 @@ export const GroundedChat: React.FC<{
           </button>
           <span className="text-[11px] text-slate-400 dark:text-slate-500">Enter to send · Shift+Enter for a new line</span>
         </div>
+        <VoiceWave levels={voiceLevels} partial={voicePartial} active={recording} />
         {voiceStatus && <p role="status" className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{voiceStatus}</p>}
       </form>
     </section>

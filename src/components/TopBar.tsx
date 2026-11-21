@@ -187,7 +187,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Right Tools & Profile Lockup */}
       <div className="ml-auto flex items-center gap-1 sm:gap-4 shrink-0">
         {/* Mock Pace Tracker */}
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#e3f4f4] text-[#007072] text-xs font-semibold border border-[#8ff3f4]">
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#e3f4f4] text-[#007072] dark:bg-slate-800 dark:text-teal-200 dark:border-slate-600 text-xs font-semibold border border-[#8ff3f4]">
           <Gauge className="w-3.5 h-3.5 text-[#0f8b8d]" />
           <span>Mock Pace</span>
           <span className="font-mono font-medium text-[#13294b]">{mockPace}</span>

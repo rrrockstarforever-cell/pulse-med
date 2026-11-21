@@ -33,11 +33,15 @@ export type OcrSource = HTMLCanvasElement | HTMLImageElement | Blob | string;
 // the timeout. tools/copy-tesseract-assets.mjs puts all three under public/tesseract/, which
 // vite copies to dist/ and express serves at the app root.
 const TESS_BASE = new URL('/tesseract/', location.href).href;
+// The Android build tools unpack ".gz" assets while packaging the app (the APK holds eng.traineddata, not
+// eng.traineddata.gz), so a request for the .gz file gets a 404 and the engine waits forever at "loading language
+// traineddata". The phone therefore asks for the plain file; the PC build keeps the compressed one.
+const ON_PHONE = typeof window !== 'undefined' && Boolean((window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 const TESS_PATHS = {
   workerPath: `${TESS_BASE}worker.min.js`,
   corePath: `${TESS_BASE}core`,
   langPath: `${TESS_BASE}lang`,
-  gzip: true,
+  gzip: !ON_PHONE,
 };
 
 const withTimeout = <T>(

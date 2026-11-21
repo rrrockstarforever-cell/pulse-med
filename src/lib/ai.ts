@@ -10,8 +10,8 @@ import { DUPLICATE_SIMILARITY, stemSimilarity, toBenchItem } from './benchmark.t
 import { scopeInstruction } from './scopeRules.ts';
 import { pipelineFor, OPTION_RULES, EXPLANATION_RULES, jsonShape, optionReasoningProblem, explanationThin, parseOptionReasons, answerInStem, decorativeCase, oppositeOptions, sourceBoundExplanation, topicAllowsTreatment, isGeneralFact, isProgrammeFact, isDatedFact, scrubSourceMentions, STYLE_EXAMPLES, DIAGNOSIS_GUARD, type ExamPipeline, type Letter as OptionLetter } from './pipelines/index.ts';
 import { leadInFitsFact, sourceLeakWhere } from './questionStyles.ts';
-import { recordDraft, draftOf, type DropRecord } from './diagnostics.ts';
-import { COMMON_STYLE_RULES, EXAM_RULES, STYLES, combinationListMissing, hasDuplicateOptions, inventedSource, explainsDistractors, explanationLeaks, leadInsFromChips, planSlots, spread, pointsAtMissingPicture, unpointDescribedPicture, styleProblem, stylesFromChips, subjectFromTopic, tierText, type Slot, type StyleId } from './questionStyles.ts';
+import { recordDraft, draftOf, noteTokens, type DropRecord } from './diagnostics.ts';
+import { COMMON_STYLE_RULES, EXAM_RULES, STYLES, combinationListMissing, hasDuplicateOptions, inventedSource, explainsDistractors, explanationLeaks, leadInsFromChips, planSlots, spread, pointsAtMissingPicture, unpointDescribedPicture, describesPicture, styleProblem, stylesFromChips, subjectFromTopic, tierText, type Slot, type StyleId } from './questionStyles.ts';
 
 /**
  * Two key facts this similar are the same fact (word overlap on the key-fact sentences). Set low because
@@ -450,7 +450,7 @@ export function factKey(s: string): string {
 }
 
 /** A fact planned for one question slot: it is quoted from a source, and the question is written around it. */
-export interface AssignedFact { subtopic: string; fact: string; quote: string; source: string; /** Where the fact came from: the user's own library ('book') or the web and papers ('web'). */ origin?: 'book' | 'web'; /** The finding has a typical picture (X-ray, histology, ECG, smear, clinical photo). */ picturable?: boolean }
+export interface AssignedFact { subtopic: string; fact: string; quote: string; source: string; /** Where the fact came from: the user's own library ('book') or the web and papers ('web'). */ origin?: 'book' | 'web'; /** The finding has a typical picture (X-ray, histology, ECG, smear, clinical photo). */ picturable?: boolean; /** A second or third question on the same fact, from a different angle (used when the plan has fewer facts than questions). */ angle?: string }
 
 const PLAN_FACTS_SYSTEM =
  'You list distinct, high-yield, exam-testable facts about one subtopic that the sources state. Do not repeat a fact already planned. ' +
@@ -731,6 +731,9 @@ async function examinerRejects(q: ClinicalQuestion, topic: string, signal?: Abor
   return String(verdict.problem ?? '').trim().slice(0, 600) || 'the examiner found a problem with the key or the options';
 }
 
+// Test hook (no effect on normal use): asks the examiner again about a saved draft, to measure how steady its verdicts are.
+(globalThis as { __reExamine?: unknown }).__reExamine = async (q: ClinicalQuestion, topic: string, exam: ExamType) => examinerRejects(q, topic, undefined, true, pipelineFor(exam));
+
 /**
  * Orders the planned facts so a set follows the exam's frequency: each subtopic gets slots in proportion to its PYQ
  * count (a class asked more often in the papers gets more questions). Facts keep their planned order within a subtopic.
@@ -801,7 +804,7 @@ async function fetchPyqWeights(subtopics: string[], exam: string): Promise<Recor
 // a fresh rewrite. 'repeat-answer' is not here: the repair keeps the same answer, so it could never pass that check.
 const REPAIRABLE_DROPS = new Set([
  'generic-lead-in', 'style-one-liner-too-long', 'examiner', 'style-mentions-source', 'style-stem-fragment', 'style-negative-has-scene', 'style-options-repeat-prefix',
- 'hint-stem-words', 'hint-absolute', 'hint-length', 'similar-options',
+ 'hint-stem-words', 'hint-absolute', 'hint-length', 'similar-options', 'opposite-options',
  'stem-incomplete', 'stem-thin', 'stem-repeats-question', 'missing-statements', 'combination-list-missing',
  'refers-to-missing-picture', 'treatment-drift',
 ]);
@@ -957,6 +960,7 @@ interface DropCtx {
   draft?: ClinicalQuestion;
   dropKey?: string;
   fact?: string;
+  angle?: string;
   planned?: boolean;
   /** Diagnostics: check-specific evidence, the slot, the attempt number and the source used. */
   detail?: Record<string, unknown>;
@@ -1004,6 +1008,7 @@ function dropQ(ctx: DropCtx | undefined, reason: string): void {
     detail: { ...evidenceFor(reason, d), ...(ctx?.detail ?? {}) },
     // The planned fact the attempt was written for, so each rejected question can be traced to its fact.
     fact: ctx?.fact,
+    angle: ctx?.angle,
     planned: ctx?.planned ?? null,
     subtopic: ctx?.subtopic ?? (d as { subtopic?: string } | undefined)?.subtopic,
     subject: ctx?.subject,
@@ -1131,6 +1136,19 @@ async function runCompletionJob(body: unknown, signal?: AbortSignal): Promise<Re
 }
 
 async function completeOn(provider: AiProviderId, model: string, options: AiCompleteOptions): Promise<string> {
+  const inputChars = String(options.system ?? '').length + JSON.stringify(options.messages ?? []).length;
+  try {
+    const text = await completeOnRaw(provider, model, options);
+    noteTokens(options.purpose, model, inputChars, text.length, true);
+    return text;
+  } catch (err) {
+    // A call that was sent and then failed or was rejected still used the input tokens.
+    if (!options.signal?.aborted) noteTokens(options.purpose, model, inputChars, 0, false);
+    throw err;
+  }
+}
+
+async function completeOnRaw(provider: AiProviderId, model: string, options: AiCompleteOptions): Promise<string> {
   const body = {
     provider,
     model,
@@ -1418,6 +1436,42 @@ interface BatchQuestionSpec {
   sourceCheck?: string;
 }
 
+/** TEST SWITCH (temporary): per-slot patients, a different angle when facts are few, and kept-question context. Set false to go back. */
+const VARIETY_TEST = true;
+const ANGLES = [
+  'the commonest clinical presentation or finding',
+  'the mechanism or why it happens',
+  'how it is diagnosed or investigated',
+  'how it is treated or managed',
+  'a complication or what goes wrong',
+  'how to tell it apart from a look-alike condition',
+  'a safety or monitoring point',
+];
+const PATIENT_AGES = [4, 9, 14, 19, 24, 28, 32, 36, 41, 45, 50, 54, 58, 63, 67, 72, 77, 82];
+/** A patient (age and sex) for slot i. The stride makes neighbouring slots differ a lot, so two slots rarely get the same patient. */
+function patientFor(i: number): string {
+  const age = PATIENT_AGES[(i * 7) % PATIENT_AGES.length];
+  const sex = (i * 5 + Math.floor(i / PATIENT_AGES.length)) % 2 === 0 ? 'woman' : 'man';
+  return age < 18 ? `${age}-year-old ${sex === 'woman' ? 'girl' : 'boy'}` : `${age}-year-old ${sex}`;
+}
+
+/** Per-module memory of facts that failed, kept across generation rounds so each new round does not retry them from zero. */
+export interface FactMemory {
+  examinerFactFails: Map<string, number>;
+  factDrops: Map<string, number>;
+  factAttempts: Map<string, number>;
+  retiredFacts: Set<string>;
+  bookMisses: Set<string>;
+  sourceMissFacts: Map<string, number>;
+  /** Key ideas (bold explanation headlines) of questions already kept, so a later round does not test them again. */
+  ideas: Set<string>[];
+  ideaTexts: string[];
+  ideaSubtopic: Map<string, string>;
+}
+export function newFactMemory(): FactMemory {
+  return { examinerFactFails: new Map(), factDrops: new Map(), factAttempts: new Map(), retiredFacts: new Set(), bookMisses: new Set(), sourceMissFacts: new Map(), ideas: [], ideaTexts: [], ideaSubtopic: new Map() };
+}
+
 export interface GenerateQuestionsOptions {
   exam: ExamType;
   count: number;
@@ -1470,6 +1524,8 @@ export interface GenerateQuestionsOptions {
   existing?: ClinicalQuestion[];
   /** Topic units ("subtopic|focus") already written in this module. Shared across rounds and updated here. */
   usedUnits?: Set<string>;
+  /** What earlier rounds of this module learned about bad facts. Shared across rounds so a retired fact stays retired. */
+  factMemory?: FactMemory;
   /** Aborts the in-flight batch request immediately (Stop button) and ends the loop. */
   signal?: AbortSignal;
   /** Called when a batch is being retried: 1-based attempt, attempt limit, and why. */
@@ -1642,7 +1698,7 @@ function buildQuestion(raw: any, exam: ExamType, pool: { subject: string; subtop
 export async function generateExamQuestions(options: GenerateQuestionsOptions): Promise<{ questions: ClinicalQuestion[]; dropped: number; stopped: boolean; failure: string | null; imagesAttached: number }> {
   const {
     exam, count, subjectSubtopics, requestedTopic, factPlan, subtopicPriority, specialities, difficultyTier, difficultySubLevel, effort,
-    onProgress, onBatch, batchPromises, shouldStop, existing, usedUnits: unitsUsed, signal, onRetry,
+    onProgress, onBatch, batchPromises, shouldStop, existing, usedUnits: unitsUsed, factMemory, signal, onRetry,
     questionTypes, stemPatterns, styles: explicitStyles, leadIns: explicitLeadIns, evidenceSources, patientGroup, presentingProblems,
     sourceMaterial, customInstructions, includeImages, booksOnly,
   } = options;
@@ -1699,13 +1755,13 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
   const acceptedPlannedFacts = new Set<string>();
   // How often the examiner has rejected a question built on each planned fact. A fact rejected twice is usually wrong,
   // hedged or too obscure in the source itself, so it is retired instead of being rewritten again and again.
-  const examinerFactFails = new Map<string, number>();
-  const MAX_EXAMINER_FAILS_PER_FACT = 2;
+  const examinerFactFails = factMemory?.examinerFactFails ?? new Map<string, number>();
+  const MAX_EXAMINER_FAILS_PER_FACT = 3;
   // Any planned fact rejected three times (a toxin fact given a treatment lead-in, a trivia fact whose options come out
   // alike) is retired too: its later rewrites almost never pass, and each one costs a writer call.
-  const factDrops = new Map<string, number>();
-  const factAttempts = new Map<string, number>();
-  const retiredFacts = new Set<string>();
+  const factDrops = factMemory?.factDrops ?? new Map<string, number>();
+  const factAttempts = factMemory?.factAttempts ?? new Map<string, number>();
+  const retiredFacts = factMemory?.retiredFacts ?? new Set<string>();
   const MAX_DROPS_PER_FACT = 3;
   const assignedFactKey = (value: unknown): string => factKey(String(value ?? ''));
   const recordFactDrop = (topic: unknown, dropKey?: string, fallbackFact?: string): void => {
@@ -1717,23 +1773,64 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
     factDrops.set(key, drops);
     if (drops >= MAX_DROPS_PER_FACT || (dropKey === 'examiner' && (examinerFactFails.get(key) ?? 0) >= MAX_EXAMINER_FAILS_PER_FACT)) retiredFacts.add(key);
   };
+  const refundFactAttempt = (topic: unknown) => {
+    const assignedNow = (topic as { assigned?: AssignedFact }).assigned;
+    const key = assignedFactKey(assignedNow?.fact);
+    if (!key) return;
+    const attemptKey = assignedNow?.angle ? `${key}#${assignedNow.angle}` : key;
+    const n = factAttempts.get(attemptKey) ?? 0;
+    if (n > 0) factAttempts.set(attemptKey, n - 1);
+  };
   const reserveFactAttempt = (topic: unknown): boolean => {
-    const key = assignedFactKey((topic as { assigned?: AssignedFact }).assigned?.fact);
+    const assignedNow = (topic as { assigned?: AssignedFact }).assigned;
+    const key = assignedFactKey(assignedNow?.fact);
     if (!key || retiredFacts.has(key)) return !key;
-    const attempts = factAttempts.get(key) ?? 0;
-    if (attempts >= MAX_DROPS_PER_FACT) { retiredFacts.add(key); return false; }
-    factAttempts.set(key, attempts + 1);
+    const attemptKey = assignedNow?.angle ? `${key}#${assignedNow.angle}` : key;
+    const attempts = factAttempts.get(attemptKey) ?? 0;
+    if (attempts >= MAX_DROPS_PER_FACT) { if (!assignedNow?.angle) retiredFacts.add(key); return false; }
+    factAttempts.set(attemptKey, attempts + 1);
     return true;
   };
   const isFactRetired = (topic: unknown): boolean => retiredFacts.has(assignedFactKey((topic as { assigned?: AssignedFact }).assigned?.fact));
   // Units ("subtopic|focus") whose book passages did not cover them: written from internet sources from then on.
-  const bookMisses = new Set<string>();
+  const bookMisses = factMemory?.bookMisses ?? new Set<string>();
   // Times each planned fact failed its source check; two misses retire the fact.
-  const sourceMissFacts = new Map<string, number>();
+  const sourceMissFacts = factMemory?.sourceMissFacts ?? new Map<string, number>();
   // Key facts kept per subtopic, so a writer sees all the facts its own subtopic already tests.
   const factsBySubtopic = new Map<string, string[]>();
   // Correct answers kept so far in this set (checked so one answer is not asked twice).
   const acceptedAnswers: string[] = [];
+  const acceptedIdeas: Set<string>[] = factMemory?.ideas ?? [];
+  const acceptedIdeaTexts: string[] = factMemory?.ideaTexts ?? [];
+  const subtopicOfIdea = factMemory?.ideaSubtopic ?? new Map<string, string>();
+  // The key idea of a question is the bold first line of its explanation, without the topic's own words (they sit in almost
+  // every line) and with plurals folded. No bold line means no idea, so the check stays silent instead of guessing.
+  const topicWords = new Set((requestedTopic ?? '').toLowerCase().match(/[a-z0-9]+/g)?.map((w) => w.replace(/s$/, '')) ?? []);
+  // British and US spellings count as the same word ("remodelling"/"remodeling", "oedema"/"edema", "haemorrhage"/"hemorrhage").
+  const usSpelling = (s: string) => s.toLowerCase().replace(/ae/g, 'e').replace(/oe/g, 'e').replace(/ll(ing|ed)\b/g, 'l$1').replace(/isation/g, 'ization').replace(/is(e|ed|ing)\b/g, 'iz$1').replace(/our\b/g, 'or');
+  const ideaOf = (explanation: unknown): Set<string> => {
+    const bold = String(explanation ?? '').match(/\*\*(.+?)\*\*/)?.[1];
+    if (!bold) return new Set();
+    return new Set(usSpelling(bold).match(/[a-z0-9]+/g)?.map((w) => w.replace(/s$/, '')).filter((w) => w.length > 3 && !topicWords.has(w)) ?? []);
+  };
+  // The subject of a question: the first meaningful word of its headline (usually the drug, mechanism or lesion). At most
+  // MAX_PER_ANCHOR kept questions may share one, so a set is not five items on digoxin Fab or on one drug class.
+  const GENERIC_ANCHORS = new Set(['acute', 'chronic', 'reduced', 'raised', 'increased', 'decreased', 'primary', 'secondary', 'severe', 'early', 'common', 'urinary', 'congenital', 'adult', 'adults', 'children', 'child', 'patient', 'patients', 'high', 'serum', 'plasma', 'blood', 'cardiac', 'renal', 'which', 'after', 'during', 'there', 'about', 'other', 'first', 'usual', 'usually', 'typical', 'typically', 'should', 'cannot', 'normal', 'higher', 'lower', 'mild', 'moderate', 'marked', 'stage', 'rate', 'level', 'levels', 'long', 'short', 'type', 'allergic', 'attack', 'control', 'adding', 'added', 'using', 'treatment', 'therapy', 'management', 'features', 'feature', 'causes', 'cause', 'effect', 'effects', 'drugs', 'disease', 'diseases', 'symptoms', 'diagnosis', 'diagnostic', 'clinical', 'significant']);
+  const MAX_PER_ANCHOR = 3;
+  // A word that runs through the plan itself ("pylori" in a peptic-ulcer plan) is part of the topic, not a drug or lesion to cap.
+  const planWordShare = new Map<string, number>();
+  for (const f of factPlan ?? []) for (const w of new Set((f.fact.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((x) => x.replace(/s$/, '')))) planWordShare.set(w, (planWordShare.get(w) ?? 0) + 1);
+  const planSize = Math.max(1, factPlan?.length ?? 1);
+  const anchorOf = (headline: string): string | undefined => headline.toLowerCase().match(/[a-z0-9]+/g)
+    ?.map((w) => w.replace(/s$/, '')).find((w) => w.length > 4 && !topicWords.has(w) && !GENERIC_ANCHORS.has(w) && (planWordShare.get(w) ?? 0) / planSize < 0.08);
+  const anchorFull = (headline: string) => Boolean(requestedTopic) && VARIETY_TEST && (() => {
+    const a = anchorOf(headline); if (!a) return false;
+    return acceptedIdeaTexts.filter((t) => anchorOf(t) === a).length >= MAX_PER_ANCHOR;
+  })();
+  const ideaClashes = (idea: Set<string>) => VARIETY_TEST && Boolean(requestedTopic) && idea.size >= 4 && acceptedIdeas.some((a) => {
+    let shared = 0; for (const w of idea) if (a.has(w)) shared++;
+    return shared / Math.min(idea.size, a.size) >= 0.75;
+  });
   // The same answers as written, for telling a rewrite which answers are taken (the normalised keys are unreadable).
   const acceptedAnswerTexts: string[] = [];
   // The most recent entries of a list, short, for a rewrite prompt: enough to steer away, without a long prompt.
@@ -1795,7 +1892,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
     ? await fetchPyqWeights([...new Set(factPlan.map((f) => f.subtopic))], exam)
     : {};
   const orderedPlannedFacts = requestedTopic && factPlan?.length
-    ? weightedOrder(factPlan.filter((f) => !used.has(`${f.subtopic}|${f.fact}`)), pipe ? priorityWeights(factPlan, pyqWeightsForPlan, subtopicPriority) : pyqWeightsForPlan)
+    ? weightedOrder(factPlan.filter((f) => !used.has(`${f.subtopic}|${f.fact}`) && !retiredFacts.has(assignedFactKey(f.fact))), pipe ? priorityWeights(factPlan, pyqWeightsForPlan, subtopicPriority) : pyqWeightsForPlan)
     : [];
   // A duplicated planner fact would otherwise create several slots for one claim and defeat retirement.
   const plannedFactKeys = new Set<string>();
@@ -1805,6 +1902,23 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
     plannedFactKeys.add(key);
     return true;
   });
+  // Few facts for many questions: after every fact has had one question, facts are used again from a new angle
+  // (presentation, mechanism, diagnosis, treatment, complication, look-alike), so the set can reach its size from fewer facts.
+  if (VARIETY_TEST && requestedTopic && factPlan?.length) {
+    // The plan has about one fact per question, but roughly a third of drafts fail, so there must be spare slots. The spares
+    // are new angles on facts that are still good: unused ones and ones already kept (never a retired fact).
+    const target = Math.ceil(count * 1.5);
+    if (plannedFacts.length < target) {
+      const bases = [...plannedFacts, ...factPlan.filter((f) => used.has(`${f.subtopic}|${f.fact}`))]
+        .filter((f) => !f.angle && !retiredFacts.has(assignedFactKey(f.fact)));
+      const base = bases.length;
+      for (let k = 0; base > 0 && plannedFacts.length < target && k < base * ANGLES.length; k++) {
+        plannedFacts.push({ ...bases[k % base], angle: ANGLES[Math.floor(k / base) % ANGLES.length] });
+      }
+    }
+  }
+  const varietyCall: Record<string, unknown> = { count, factPlan: factPlan?.length ?? 0, planned: plannedFacts.length, withAngle: plannedFacts.filter((f) => f.angle).length, on: VARIETY_TEST };
+  ((globalThis as { __varietyDebug?: unknown[] }).__varietyDebug ??= []).push(varietyCall);
   // Every planned fact gets a slot: its style (vignette, one-liner, NOT, match, statements, ...), lead-in and difficulty,
   // from the styles the learner picked or, when none, the exam's own mix.
   // A speciality run over several specialities has no single subject: each slot uses its own fact's specialty instead.
@@ -1860,7 +1974,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
     // The slot (style, lead-in, difficulty) this question was planned for; a slot given by the worker replaces it on a fallback.
     const slot = slotOverride ?? (topic as { slot?: Slot }).slot;
     const factStepOn = !assigned && Boolean(requestedTopic && activeProvider) && (factHits > 0 || factTries < 6);
-    if (ctx) ctx.planned = Boolean(assigned);
+    if (ctx) { ctx.planned = Boolean(assigned); ctx.angle = assigned?.angle; }
     const sourced = assigned ?? (factStepOn
       ? await pickSourcedFact(requestedTopic!, focus, activeProvider!, signal ?? undefined, acceptedKeyFacts, booksOnly)
       : null);
@@ -1891,6 +2005,8 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
       requestedTopic && slot
         ? `The learner asked for exactly: "${requestedTopic}". The item must test that content itself (the named effect, feature, drug or fact) in the style given below. The stem must give real context (a subject, a setting or a finding), never a topic label, and must not name or hint at the answer. Never refer to a picture, list or table that the stem does not contain ("this biopsy", "shown here") unless the style is image-based and the stem says what the picture shows. The options must be clearly different from each other, with only one defensible answer. Use "confirms" or "diagnostic" only when the finding really settles the diagnosis.`
         : requestedTopic ? `The learner asked for exactly: "${requestedTopic}". Each item must test that content itself (the named effect, feature, drug or fact). Test mechanism only if the request asks for it, and do not test a workup, diagnosis or management step that follows from it. Keep the stem short and direct; a brief case is fine only when the answer is that fact. The stem must give real context (a patient, a setting or a finding), never a topic label, and must not name or hint at the answer. ${pipe && topicAllowsTreatment(requestedTopic) ? 'Treatment, drugs (with their adverse effects) and national programme regimens are part of this topic and may be tested.' : 'Stay inside the request: do not write treatment, management or investigation items unless the request names them.'} Use a patient case in at most one item in three; the other items are one-line questions about the fact. Never use a generic lead-in such as "the most likely diagnosis" or "the most appropriate investigation" without naming the condition or the finding it is about. The four options must be clearly different from each other, with only one defensible answer. Use "confirms" or "diagnostic" only when the finding really settles the diagnosis; otherwise ask for a supporting or most likely finding.` : '',
+      VARIETY_TEST && assigned?.angle ? `This fact is being used again, so test it from this angle only: ${assigned.angle}. Ask about something different from the fact's headline answer; the correct option must be a different answer from earlier questions on this fact.` : '',
+      VARIETY_TEST ? 'Quality rules: (1) Every wrong option must be a real, plausible alternative a student could pick, never an obvious absurdity such as "variable without a usual direction" or "discuss with cardiology". (2) Do not open the case with the same presenting picture as the rest of the set (for example vomiting, dehydration and deep breathing); give this patient a different setting, presenting complaint or stage, such as a first presentation, a known patient, an emergency visit, a ward round, a referral or a complication. (3) The question line must stand on its own and name what it asks about; never write "the relevant analyte" or "this drug class" without naming it in the stem. (4) For a NOT/EXCEPT question the false statement must be subtle and tempting, not an obvious reversal such as "insulin reduces glucose uptake". (5) Prefer asking WHY or WHAT NEXT over repeating a single textbook sentence.' : '',
       requestedTopic && acceptedStems.length ? `Already in this set, so do not reuse these patients, scenarios or drugs: ${acceptedStems.slice(-25).map((s) => s.slice(0, 110)).join(' | ')}` : '',
       // Told up front, the writer picks a different answer instead of being rejected for a repeat afterwards (picture
       // facts otherwise all become "the most likely diagnosis", with the same answer again and again).
@@ -1902,8 +2018,9 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         : '',
       // Every fact already tested in this subtopic, in full: the Pharmacology report showed the writer returning to the
       // same classic facts (TB regimen 15 times) because it only saw the last 12 facts of the whole set, cut short.
-      factsBySubtopic.get(topic.subtopic)?.length ? `Facts already tested in this subtopic (all of them; test a different one): ${factsBySubtopic.get(topic.subtopic)!.map((f) => f.slice(0, 200)).join(' | ')}` : '',
-      requestedTopic && acceptedKeyFacts.length ? `Key facts already tested in this set. Do not test any of them again, not even in other words: ${acceptedKeyFacts.slice(-20).map((f) => f.slice(0, 120)).join(' | ')}` : '',
+      VARIETY_TEST && assigned?.angle && acceptedIdeaTexts.length ? `Ideas already tested by kept questions on this topic. Your question must test a different idea, so its explanation headline must not restate any of these: ${acceptedIdeaTexts.filter((t) => (subtopicOfIdea.get(t) ?? '') === topic.subtopic).slice(-12).map((t) => `"${t.slice(0, 120)}"`).join(' | ') || acceptedIdeaTexts.slice(-8).map((t) => `"${t.slice(0, 120)}"`).join(' | ')}` : '',
+      factsBySubtopic.get(topic.subtopic)?.length && !(VARIETY_TEST && assigned?.angle) ? `Facts already tested in this subtopic (all of them; test a different one): ${factsBySubtopic.get(topic.subtopic)!.map((f) => f.slice(0, 200)).join(' | ')}` : '',
+      requestedTopic && acceptedKeyFacts.length && !(VARIETY_TEST && assigned?.angle) ? `Key facts already tested in this set. Do not test any of them again, not even in other words: ${acceptedKeyFacts.slice(-20).map((f) => f.slice(0, 120)).join(' | ')}` : '',
       shape ?? '',
       slot && STYLES[slot.style].codedOptions ? '' : `Make the ${pattern.opts} options similar in length and detail. The correct option must not be the longest or the most detailed.`,
       pipe
@@ -2085,7 +2202,11 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         const structural = structureReason(q);
         const shape = (structural === 'stem-repeats-question' && oneLineQuestion ? null : structural) ?? (combinationListMissing(q) ? 'combination-list-missing' : null) ?? (inventedSource(q) ? 'invented-source' : null) ?? (genericLeadIn ? 'generic-lead-in' : null) ?? (thinStem ? 'stem-thin' : null) ?? (twinOptions && !codedOptions ? 'similar-options' : null) ?? (repeatedPatient ? 'repeat-patient' : null) ?? (tooManyCases && !slot ? 'too-many-cases' : null) ?? (driftsIntoTreatment && !managesByDesign ? 'treatment-drift' : null);
         const SHAPE_HINTS: Record<string, string> = {
- 'generic-lead-in': 'the question line must name the fact or finding it asks about; do not end the stem with a question mark',
+ 'generic-lead-in': dependsOnOutside
+   ? 'the stem points at "that/this list, group, statement or pattern" or says "listed" without giving it: write the stem so it stands alone, naming the thing itself, and never refer to "this pattern", "that list" or "listed"'
+   : stemIsQuestion
+     ? 'the stem must not end with a question mark: put the case or context in the stem as statements and the one question in the question line'
+     : 'the question line is too short or generic: it must name the fact or finding it asks about (at least about 40 characters)',
  'invented-source': 'do not cite a guideline, survey, study or shortage; describe the case itself, with no source the stem does not give',
  'combination-list-missing': 'the question asks for a combination or a match, so the stem must list the items: "A. ...", "B. ...", "C. ...", "D. ..." and "1. ...", "2. ...", "3. ...", "4. ..." each on its own line',
  'stem-thin': 'the stem needs real context, not a label',
@@ -2115,6 +2236,13 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
           return null;
         }
         // The style asked for must really be delivered (match lists, numbered statements, numbers, lead-in, and so on).
+        // A NOT/EXCEPT item is one plain sentence about the subject. When the writer put a patient scene in the stem but the
+        // question line already says NOT/EXCEPT and names the subject, the stem is set to that line in code (the model is not asked again).
+        if (slot?.style === 'negative') {
+          const ql = String((q as { questionText?: string }).questionText ?? '').trim();
+          if (ql.length >= 45 && /\b(NOT|EXCEPT|FALSE|INCORRECT|LEAST|UNTRUE)\b/.test(ql) && (q.stem ?? '').trim() !== ql
+            && !/\b\d{1,3}[- ](year|month)s?[- ]old\b|\b(patient|man|woman|boy|girl|child|infant)\b/i.test(ql)) q.stem = ql;
+        }
         let styleIssue = styleProblem(q, slot, pattern.opts, true);
         // NEET PG / INI-CET: the planned lead-in (diagnosis, next step, ...) is a target for the set's mix, not a reason to
         // reject, unless the learner chose the lead-in. A different but real question line is accepted (26 rejections and
@@ -2166,13 +2294,14 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         // Without a written key fact, the correct option's text stands in, so repeats are still caught.
         // A planned slot keeps its planned fact as the key fact. The planner already kept those facts distinct.
         const keyFact = sourced ? sourced.fact : ((q.keyFact || '').trim() || (q.options.find((o) => o.id === q.correctOption)?.text ?? '').trim());
-        if (assigned && acceptedPlannedFacts.has(assignedFactKey(assigned.fact))) { dropQ(ctx, 'repeat-planned-fact'); return null; }
+        if (assigned && !(VARIETY_TEST && assigned.angle) && acceptedPlannedFacts.has(assignedFactKey(assigned.fact))) { dropQ(ctx, 'repeat-planned-fact'); return null; }
         if (!sourced && keyFact && acceptedKeyFacts.some((k) => stemSimilarity(k, keyFact) >= KEY_FACT_SIMILARITY)) {
           if (ctx) ctx.detail = { keyFact, ...closest(acceptedKeyFacts, keyFact, 'fact') }; claimed = false; if (ctx) ctx.reason = `the set already tests this fact. Test a different fact of the topic. Facts already used${factsBySubtopic.get(topic.subtopic)?.length ? ' in this subtopic (all of them)' : ''}: ${factsBySubtopic.get(topic.subtopic)?.length ? factsBySubtopic.get(topic.subtopic)!.map((f) => `"${f.slice(0, 160)}"`).join('; ') : usedList(acceptedKeyFacts)}`; dropQ(ctx, 'repeat-fact'); return null; }
         // The same correct answer asked again in other words (for example the same imaging test) is also a repeat.
         // Abbreviations and generic words are normalised first, so "CT" and "computed tomography", or "serum lipase level"
         // and "lipase assay", count as the same answer.
         const answerKey = (s: string) => s.toLowerCase()
+          .replace(/ae/g, 'e').replace(/oe/g, 'e').replace(/ll(ing|ed)\b/g, 'l$1').replace(/isation/g, 'ization')
           .replace(/\bct\b/g, 'computed tomography')
           .replace(/\b(serum|level|levels|assay|test|the|of|and|in|a|an|with|for|is|are|on|at)\b/g, ' ')
           .replace(/\s+/g, ' ').trim();
@@ -2180,6 +2309,15 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         const correctKey = answerKey(correctText);
         if (correctKey && requestedTopic && !codedOptions && acceptedAnswers.some((a) => stemSimilarity(a, correctKey) >= 0.5)) {
           if (ctx) ctx.detail = { answer: correctText, ...closest(acceptedAnswerTexts, correctText, 'answer') }; claimed = false; if (ctx) ctx.reason = `the correct answer "${correctText.slice(0, 80)}" is already the answer of another question in the set; pick a fact with a different answer. Answers already used: ${usedList(acceptedAnswerTexts)}`; dropQ(ctx, 'repeat-answer'); return null; }
+        // Same key idea again: the bold first line of the explanation names what the question really tests. Spare angle slots
+        // (and planned facts that overlap) can re-test the same idea in a new patient, so two kept questions must not share it.
+        if (ideaClashes(ideaOf(q.explanation)) || anchorFull(String(q.explanation ?? '').match(/\*\*(.+?)\*\*/)?.[1] ?? '')) {
+          const myHead = String(q.explanation ?? '').match(/\*\*(.+?)\*\*/)?.[1] ?? '';
+          const clashAt = acceptedIdeas.findIndex((a) => { const mine = ideaOf(q.explanation); let s = 0; for (const w of mine) if (a.has(w)) s++; return mine.size >= 4 && s / Math.min(mine.size, a.size) >= 0.75; });
+          const anchor = anchorOf(myHead);
+          const clashText = clashAt >= 0 ? acceptedIdeaTexts[clashAt] : (anchor ? acceptedIdeaTexts.find((t) => anchorOf(t) === anchor) : undefined);
+          if (ctx) ctx.detail = { check: clashAt >= 0 ? 'headline-overlap' : `anchor:${anchor}`, headline: myHead, matched: clashText };
+          claimed = false; if (ctx) ctx.reason = `your question tests "${myHead.slice(0, 120)}", which a kept question already covers${clashText ? ` ("${clashText.slice(0, 120)}")` : ''}; test a different fact or a different feature of the topic, and do not restate either`; dropQ(ctx, 'repeat-key-idea'); return null; }
         // The learner's books are the source of truth, so a book question is not re-checked against other sources.
         const verdict = useBooks ? 'supported' : await verifyItem(q, { query: groundQuery, subject: topic.subject, books: undefined }, signal);
         if (verdict !== 'supported') {
@@ -2251,7 +2389,11 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
           // other lanes keep writing. A doubtful first picture gets one second search; no good picture after that means a
           // picture-style question is dropped (a question that only has an optional picture stays text-only).
           const live = await findPictureForQuestion(q, usedImages);
-          if (!live && slot?.style === 'image') {
+          // A picture-style item whose stem already describes the picture in words (INI-CET image-described items) is kept as a
+          // text item when no picture is found, instead of throwing the whole draft away (about half of all picture drafts died here).
+          if (!live && slot?.style === 'image' && describesPicture(q) && (unpointDescribedPicture(q) || !pointsAtMissingPicture(q))) {
+            q.figureQuery = undefined; q.figureModality = undefined;
+          } else if (!live && slot?.style === 'image') {
             if (ctx) ctx.reason = 'no picture that fits this question was found after two searches; write a different picture question';
             noPictureFor.add(pictureKey);
             dropQ(ctx, 'no-fitting-picture');
@@ -2280,9 +2422,22 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
           dropQ(ctx, 'refers-to-missing-picture');
           return null;
         }
+        // Checked again with the final explanation and with no waiting before the save: another worker may have kept the
+        // same idea while this draft was being verified or repaired.
+        const finalIdea = ideaOf(q.explanation);
+        const finalHeadline = String(q.explanation ?? '').match(/\*\*(.+?)\*\*/)?.[1] ?? '';
+        if (ideaClashes(finalIdea) || (finalHeadline && anchorFull(finalHeadline))) {
+          if (attachedHere) usedImages.delete(attachedHere);
+          claimed = false; if (ctx) ctx.reason = 'another question with the same key idea was kept while this one was being checked; test a different feature of the topic'; dropQ(ctx, 'repeat-key-idea'); return null;
+        }
         if (attachedHere) attachedImages += 1;
 
         if (correctKey) { acceptedAnswers.push(correctKey); acceptedAnswerTexts.push(correctText); }
+        if (finalIdea.size) {
+          acceptedIdeas.push(finalIdea);
+          const headline = String(q.explanation ?? '').match(/\*\*(.+?)\*\*/)?.[1] ?? '';
+          if (headline) { acceptedIdeaTexts.push(headline); subtopicOfIdea.set(headline, topic.subtopic); }
+        }
         seenStems.add(key);
         acceptedStems.push(fullStem);
         if (keyFact) { acceptedKeyFacts.push(keyFact); factsBySubtopic.set(topic.subtopic, [...(factsBySubtopic.get(topic.subtopic) ?? []), keyFact]); }
@@ -2299,10 +2454,16 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
           return null;
         }
         if (err instanceof AiError && err.kind === 'not_connected') throw err;
+        // A provider error says nothing about the fact, so the attempt it used is given back (otherwise a server hiccup
+        // retires a good fact), and the error is kept in the run report so it can be read afterwards.
+        refundFactAttempt(topic);
+        ((globalThis as { __providerErrors?: string[] }).__providerErrors ??= []).push(`${err instanceof AiError ? err.kind : err?.name ?? 'error'}: ${String(err?.message || err).slice(0, 160)}`);
         if (!isRetryable(err)) break;
-        // Rate limited by the provider: wait longer before the next attempt.
+        // Rate limited by the provider: wait longer before the next attempt; other errors wait a little.
         if (/429|rate.?limit|too many requests/i.test(String(err?.message || err))) {
           await new Promise((resolve) => setTimeout(resolve, 4000 * (a + 1)));
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 1500 * (a + 1)));
         }
       }
     }
@@ -2431,7 +2592,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         dropQ(ctx, 'over-target');
       } else if (q) {
         questions.push(q);
-        recordDraft({ outcome: 'accepted', subtopic: topic.subtopic, subject: q.subject, fact: ctx.fact, planned: ctx.planned ?? null, attempt: retries, slot: slot ? { style: slot.style, leadIn: slot.leadIn, tier: slot.tier } : undefined, source: ctx.source, draft: draftOf(q) });
+        recordDraft({ outcome: 'accepted', subtopic: topic.subtopic, subject: q.subject, fact: ctx.fact, angle: ctx.angle, planned: ctx.planned ?? null, attempt: retries, slot: slot ? { style: slot.style, leadIn: slot.leadIn, tier: slot.tier } : undefined, source: ctx.source, draft: draftOf(q) });
         if (repaired) reportRepair('accepted', repairedFor);
         if (questions.length >= count) markTargetReached();
       } else if (ctx.dropKey === 'verify-error' && ctx.draft && verifyErrors < MAX_VERIFY_ERRORS && !stopped && !signal?.aborted) {
@@ -2441,7 +2602,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
       } else {
         if (repaired && repairedFor && ctx.dropKey !== 'verify-error') reportRepair('rejected-again', `${repairedFor} -> ${ctx.dropKey}`);
         recordFactDrop(topic, ctx.dropKey, ctx.fact);
-        if (isFactRetired(topic)) {
+        if (isFactRetired(topic) || (VARIETY_TEST && ctx.angle && (ctx.dropKey === 'repeat-key-idea' || (ctx.dropKey === 'examiner' && retries >= 1)))) {
         // The planned fact keeps failing (the examiner rejected it twice, or any check rejected it three times): the
         // slot is given up (the drop is already counted), and the lane moves on to the next fact.
         } else if (retries < MAX_TOPIC_RETRIES && !stopped && !signal?.aborted) {
@@ -2464,6 +2625,10 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
         const examinerAgain = ctx.dropKey === 'examiner' && repairedFor === 'examiner';
         // NEET PG / INI-CET: no repair-in-place. Across v2 and v3 a repair was kept about a third of the time (34%, 33%), no
         // better than writing the question again with the reason, so the slot is simply rewritten with the reason.
+        // Build 1.0.138: mechanical defects (a scene in a NOT stem, opposite options, a too-long one-liner, hint words) are repaired in place
+        // for NEET PG / INI-CET too, because the repair is one small call that keeps the fact and key; examiner rejections are still rewritten.
+        // 1.0.139: switched back off for NEET PG / INI-CET. In the peptic-ulcer run about 15 repairs were made and none was kept,
+        // and each failed repair used one of the fact's three tries.
         const canRepair = !pipe && !examinerAgain && retries < MAX_REPAIRS && Boolean(ctx.draft) && Boolean(ctx.dropKey) && REPAIRABLE_DROPS.has(ctx.dropKey!);
         const fixed = canRepair
           ? await repairDraft(ctx.draft!, ctx.reason ?? ctx.dropKey!, getActiveProvider() ?? 'gemini').catch(() => null)
@@ -2482,6 +2647,7 @@ export async function generateExamQuestions(options: GenerateQuestionsOptions): 
   };
   // The run ends as soon as the target is reached. Calls still in flight would only be discarded, so they are not waited for.
   await Promise.race([Promise.all(Array.from({ length: GENERATION_CONCURRENCY }, () => worker())), targetReached]);
+  Object.assign(varietyCall, { endedWith: questions.length, queueLeft: queue.length, stopped: Boolean(stopped), failure: Boolean(failure), completed: completedCount, retired: retiredFacts.size });
 
   // Dedup by stem (already done in generateSingleQuestion, but double-check).
   const unique = questions.filter((q, i) => questions.findIndex((x) => x.stem === q.stem) === i);

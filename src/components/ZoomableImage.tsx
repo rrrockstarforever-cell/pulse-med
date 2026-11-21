@@ -9,6 +9,7 @@
 // reveal (see safeImageCaption / safeSubtopic). This component never fetches anything.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Maximize2, Minus, Plus, RotateCcw, X } from 'lucide-react';
+import { useBackLayer } from '../lib/backLayers.ts';
 
 interface ZoomableImageProps {
   src: string;
@@ -43,6 +44,8 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
     setOpen(false);
     setScale(1);
   }, []);
+
+  useBackLayer(open, close);
 
   const zoomIn = useCallback(() => setScale((s) => Math.min(MAX_SCALE, +(s + STEP).toFixed(2))), []);
   const zoomOut = useCallback(() => setScale((s) => Math.max(MIN_SCALE, +(s - STEP).toFixed(2))), []);

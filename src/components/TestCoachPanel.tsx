@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useBackLayer } from '../lib/backLayers.ts';
 import { GraduationCap, Sparkles, X, Loader2, TrendingDown, CheckCircle2, RotateCcw, BookX } from 'lucide-react';
 import { aiComplete, extractJson, getActiveProvider, getEffectiveModel } from '../lib/ai.ts';
 import { setTutorSeed } from '../lib/tutorSeed.ts';
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export const TestCoachPanel: React.FC<Props> = ({ review, darkMode, celebrate, onClose, onTeach, onRetry, onOpenNotebook }) => {
+  useBackLayer(true, onClose);
   useEffect(() => { if (celebrate && review.xp) playReward(); }, []);
   const stats = review.topics;
   const { answered, correct, total } = review;

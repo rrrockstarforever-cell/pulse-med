@@ -3,8 +3,8 @@
 // Order: cached page text -> live PDF extraction -> honest error (e.g. scanned
 // page with no text layer, which must be OCR'd in the PDF Reader first).
 
-import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { getLibraryDocument, getPageText, savePageText } from './pdfLibraryDB.ts';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
